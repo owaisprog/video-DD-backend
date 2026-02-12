@@ -15,4 +15,4 @@ connectToDatabase()
     console.log(`Mongodb Connection failed, error: ${err}`);
   });
 
-module.exports = app;
+export default app;
