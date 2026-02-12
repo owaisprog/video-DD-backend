@@ -14,3 +14,5 @@ connectToDatabase()
   .catch((err) => {
     console.log(`Mongodb Connection failed, error: ${err}`);
   });
+
+module.exports = app;
