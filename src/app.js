@@ -28,6 +28,10 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 app.use(cookieParser());
 
+app.use("/health", (_, res) => {
+  res.send("Health is good");
+});
+
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/video", videoRoutes);
 app.use("/api/v1/like", likeRoutes);
