@@ -7,44 +7,54 @@ import { Comment } from "../models/comments.model.js";
 import mongoose from "mongoose";
 
 export const toggleVideoLike = asyncHandler(async (req, res) => {
-  // first delete one
-  // if its not delete than create it
-
   const { videoId } = req.params;
 
-  if (!videoId) {
-    throw new ApiError(400, "videoId is required");
-  }
+  if (!videoId) throw new ApiError(400, "videoId is required");
+  if (!mongoose.isValidObjectId(videoId))
+    throw new ApiError(400, "Invalid videoId");
 
   const findVideo = await Video.findById(videoId);
+  if (!findVideo) throw new ApiError(404, "Video not found");
 
-  if (!findVideo) {
-    throw new ApiError(400, "Video not found");
-  }
-
-  const deleteVideo = await Like.deleteOne({
+  // ✅ atomic: delete if exists
+  const deleted = await Like.findOneAndDelete({
     video: videoId,
-    likedBy: req.user?._id,
+    likedBy: req.user._id,
   });
 
-  if (deleteVideo.deletedCount !== 0) {
+  if (deleted) {
     return res
       .status(200)
-      .json(new ApiResponse(200, {}, "like deleted successfully"));
+      .json(
+        new ApiResponse(200, { liked: false }, "Like deleted successfully")
+      );
   }
 
-  const createdLike = await Like.create({
-    video: videoId,
-    likedBy: req.user?._id,
-  });
+  // ✅ create if not exists (handle race duplicates)
+  try {
+    const createdLike = await Like.create({
+      video: videoId,
+      likedBy: req.user._id,
+    });
 
-  if (!createdLike) {
-    throw new ApiError(400, "Error in creating like");
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { liked: true, like: createdLike },
+          "Like created successfully"
+        )
+      );
+  } catch (err) {
+    // ✅ if two requests race, second one hits duplicate key => treat as "liked"
+    if (err?.code === 11000) {
+      return res
+        .status(200)
+        .json(new ApiResponse(200, { liked: true }, "Like already exists"));
+    }
+    throw err;
   }
-
-  return res
-    .status(200)
-    .json(new ApiResponse(200, createdLike, "Like created successfully"));
 });
 
 export const toggleCommentLike = asyncHandler(async (req, res) => {

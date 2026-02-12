@@ -11,6 +11,10 @@ const comment = new Schema(
       type: Schema.Types.ObjectId,
       ref: "Video",
     },
+    posts: {
+      type: Schema.Types.ObjectId,
+      ref: "Post",
+    },
     user: {
       type: Schema.Types.ObjectId,
       ref: "User",

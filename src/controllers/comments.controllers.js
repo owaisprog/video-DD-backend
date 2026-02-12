@@ -1,26 +1,59 @@
+import mongoose from "mongoose";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
 import { Comment } from "../models/comments.model.js";
+import asyncHandler from "../utils/asyncHandler.js";
+
+const clampInt = (val, def, min, max) => {
+  const n = Number.parseInt(String(val), 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, n));
+};
 
 export const getVideoComments = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
-  const { page = 1, limit = 10 } = req.query;
 
-  if (videoId) {
+  if (!videoId) {
     throw new ApiError(400, "videoId is required");
   }
+  if (!mongoose.Types.ObjectId.isValid(videoId)) {
+    throw new ApiError(400, "Invalid videoId");
+  }
 
-  const options = {
+  const page = clampInt(req.query.page, 1, 1, 10_000);
+  const limit = clampInt(req.query.limit, 10, 1, 50);
+
+  // Aggregation to also include user fields
+  const pipeline = [
+    { $match: { video: new mongoose.Types.ObjectId(videoId) } },
+    { $sort: { createdAt: -1 } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+        pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],
+      },
+    },
+    { $unwind: "$user" },
+    {
+      $project: {
+        text: 1,
+        video: 1,
+        user: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    },
+  ];
+
+  const agg = Comment.aggregate(pipeline);
+
+  const comments = await Comment.aggregatePaginate(agg, {
     page,
     limit,
-  };
-
-  const aggregate = await Comment.find({
-    video: videoId,
   });
-
-  const comments = await Comment.aggregatePaginate(aggregate, options);
 
   return res
     .status(200)
@@ -28,11 +61,16 @@ export const getVideoComments = asyncHandler(async (req, res) => {
 });
 
 export const addComment = asyncHandler(async (req, res) => {
-  const { text, videoId } = req.body;
+  const videoId = req.params.videoId || req.body.videoId;
+  const textRaw = req.body?.text;
 
-  if (!(text || videoId)) {
-    throw new ApiError(400, "Text and Video is required");
+  const text = typeof textRaw === "string" ? textRaw.trim() : "";
+
+  if (!videoId) throw new ApiError(400, "videoId is required");
+  if (!mongoose.Types.ObjectId.isValid(videoId)) {
+    throw new ApiError(400, "Invalid videoId");
   }
+  if (!text) throw new ApiError(400, "Text is required");
 
   const comment = await Comment.create({
     text,
@@ -40,43 +78,86 @@ export const addComment = asyncHandler(async (req, res) => {
     user: req.user?._id,
   });
 
+  // Return comment with user populated (same shape as list)
+  const created = await Comment.aggregate([
+    { $match: { _id: comment._id } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+        pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],
+      },
+    },
+    { $unwind: "$user" },
+    { $project: { text: 1, video: 1, user: 1, createdAt: 1, updatedAt: 1 } },
+  ]);
+
   return res
-    .status(200)
-    .json(new ApiResponse(200, comment, "Comment created successfully"));
+    .status(201)
+    .json(new ApiResponse(201, created?.[0], "Comment created successfully"));
 });
 
 export const updateComment = asyncHandler(async (req, res) => {
   const { commentId } = req.params;
-  const { text } = req.body;
+  const textRaw = req.body?.text;
+  const text = typeof textRaw === "string" ? textRaw.trim() : "";
 
-  if (!(text || commentId)) {
-    throw new ApiError(400, "Text and commentId is required");
+  if (!commentId) throw new ApiError(400, "commentId is required");
+  if (!mongoose.Types.ObjectId.isValid(commentId)) {
+    throw new ApiError(400, "Invalid commentId");
+  }
+  if (!text) throw new ApiError(400, "Text is required");
+
+  const existing = await Comment.findById(commentId);
+  if (!existing) throw new ApiError(404, "Comment not found");
+
+  if (String(existing.user) !== String(req.user?._id)) {
+    throw new ApiError(403, "You are not allowed to update this comment");
   }
 
-  const updatedComment = await Comment.findByIdAndUpdate(commentId, {
-    $set: {
-      text,
+  existing.text = text;
+  await existing.save();
+
+  const updated = await Comment.aggregate([
+    { $match: { _id: existing._id } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+        pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],
+      },
     },
-  });
+    { $unwind: "$user" },
+    { $project: { text: 1, video: 1, user: 1, createdAt: 1, updatedAt: 1 } },
+  ]);
 
   return res
     .status(200)
-    .json(new ApiResponse(200, updateComment, "Comment updated successfully"));
+    .json(new ApiResponse(200, updated?.[0], "Comment updated successfully"));
 });
 
 export const deleteComment = asyncHandler(async (req, res) => {
   const { commentId } = req.params;
 
-  if (!commentId) {
-    throw new ApiError(200, "CommentId is required");
+  if (!commentId) throw new ApiError(400, "commentId is required");
+  if (!mongoose.Types.ObjectId.isValid(commentId)) {
+    throw new ApiError(400, "Invalid commentId");
   }
 
-  const deletedComment = await delete { _id: commentId };
-  if (deletedComment.deletedCount === 0) {
-    throw new ApiError(200, "Comment not found");
+  const existing = await Comment.findById(commentId);
+  if (!existing) throw new ApiError(404, "Comment not found");
+
+  if (String(existing.user) !== String(req.user?._id)) {
+    throw new ApiError(403, "You are not allowed to delete this comment");
   }
+
+  await Comment.deleteOne({ _id: commentId });
 
   return res
     .status(200)
-    .json(new ApiResponse(200, {}, "Comment is deleted successfully"));
+    .json(new ApiResponse(200, {}, "Comment deleted successfully"));
 });

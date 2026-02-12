@@ -1,74 +1,98 @@
 import mongoose, { isValidObjectId } from "mongoose";
 import { Playlist } from "../models/playlist.model.js";
+import { Video } from "../models/video.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
-import { Video } from "../models/video.model.js";
+import asyncHandler from "../utils/asyncHandler.js";
+
+const toObjectId = (id, name = "id") => {
+  if (!id || !isValidObjectId(id)) {
+    throw new ApiError(400, `Invalid ${name}`);
+  }
+  return new mongoose.Types.ObjectId(id);
+};
 
 const createPlaylist = asyncHandler(async (req, res) => {
   const { name, description } = req.body;
-  const fieldsArray = [
-    { name: "name", value: name },
-    { name: "description", value: description },
-  ];
 
-  for (const { name, value } of fieldsArray) {
-    if (value === undefined || value === null || String(value).trim() === "") {
-      throw new ApiError(400, `${name} is required`);
-    }
+  if (!name || String(name).trim() === "") {
+    throw new ApiError(400, "name is required");
+  }
+  if (!description || String(description).trim() === "") {
+    throw new ApiError(400, "description is required");
   }
 
   const playList = await Playlist.create({
-    name,
-    description,
+    name: String(name).trim(),
+    description: String(description).trim(),
     owner: req.user?._id,
   });
 
   return res
-    .status(200)
-    .json(new ApiResponse(200, playList, "Playlist created successfully"));
+    .status(201)
+    .json(new ApiResponse(201, playList, "Playlist created successfully"));
 });
 
 const getUserPlaylists = asyncHandler(async (req, res) => {
-  let { page = 1, limit = 10, userId } = req.params;
+  let { page = 1, limit = 10, userId, sortBy, sortType } = req.params;
 
   page = Number(page);
   limit = Number(limit);
 
-  const options = {
-    page,
-    limit,
-  };
+  const ownerId = toObjectId(userId, "userId");
 
-  if (userId) {
-    if (!isValidObjectId(userId)) {
-      throw new ApiError(200, "Invalid userId");
-    }
+  // ✅ security: don’t allow fetching other users playlists
+  if (String(req.user?._id) !== String(ownerId)) {
+    throw new ApiError(403, "Forbidden");
   }
+  const sort = { [sortType]: sortBy === "asc" ? -1 : 1, _id: 1 };
+
+  const options = { page, limit };
 
   const aggregate = Playlist.aggregate([
-    {
-      $match: {
-        owner: new mongoose.Types.ObjectId(userId),
-      },
-    },
-    { $sort: { createdAt: 1, _id: 1 } },
+    { $match: { owner: ownerId } },
+
+    { $sort: sort },
+
     {
       $lookup: {
-        from: "Video",
+        from: "videos",
         localField: "videos",
         foreignField: "_id",
         as: "Videos",
         pipeline: [
           {
             $lookup: {
-              from: "User",
+              from: "users",
               localField: "owner",
               foreignField: "_id",
               as: "owner",
             },
           },
+          {
+            $project: {
+              _id: 1,
+              thumbnail: 1,
+              title: 1,
+              owner: 1,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          },
         ],
+      },
+    },
+
+    // keep playlist response light
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        description: 1,
+        videos: 1,
+        Videos: 1,
+        createdAt: 1,
+        updatedAt: 1,
       },
     },
   ]);
@@ -77,94 +101,122 @@ const getUserPlaylists = asyncHandler(async (req, res) => {
 
   return res
     .status(200)
-    .json(new ApiResponse(200, playList, "Fetched playlist successfully"));
+    .json(new ApiResponse(200, playList, "Fetched playlists successfully"));
 });
 
 const getPlaylistById = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, playlistId } = req.params;
+  let { page = 1, limit = 10, playlistId } = req.params;
+
   page = Number(page);
   limit = Number(limit);
 
-  const options = {
-    page,
-    limit,
-  };
+  const pid = toObjectId(playlistId, "playlistId");
+  const skip = (page - 1) * limit;
 
-  if (userId) {
-    if (!isValidObjectId(playlistId)) {
-      throw new ApiError(200, "Invalid playlistId");
-    }
-  }
+  // ✅ This endpoint should paginate VIDEOS inside the playlist
+  // We'll return: { docs:[playlistDocWithVideosPage], page, totalPages }
+  const result = await Playlist.aggregate([
+    // ✅ ensure user only accesses their own playlist
+    { $match: { _id: pid, owner: toObjectId(String(req.user?._id), "owner") } },
 
-  const aggregate = Playlist.aggregate([
+    // compute total video count from ids array
     {
-      $match: {
-        _id: new mongoose.Types.ObjectId(playlistId),
+      $addFields: {
+        videosCount: { $size: { $ifNull: ["$videos", []] } },
       },
     },
-    { $sort: { createdAt: 1, _id: 1 } },
+
+    // ✅ paginated lookup of Videos
     {
       $lookup: {
-        from: "Video",
-        localField: "videos",
-        foreignField: "_id",
-        as: "Videos",
+        from: "videos",
+        let: { videoIds: "$videos" },
         pipeline: [
           {
+            $match: {
+              $expr: { $in: ["$_id", "$$videoIds"] },
+            },
+          },
+          { $sort: { createdAt: -1, _id: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+          {
             $lookup: {
-              from: "User",
+              from: "users",
               localField: "owner",
               foreignField: "_id",
               as: "owner",
             },
           },
+          {
+            $project: {
+              _id: 1,
+              thumbnail: 1,
+              title: 1,
+              description: 1,
+              views: 1,
+              duration: 1,
+              owner: 1,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          },
         ],
+        as: "Videos",
+      },
+    },
+
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        description: 1,
+        videos: 1,
+        videosCount: 1,
+        Videos: 1,
+        createdAt: 1,
+        updatedAt: 1,
       },
     },
   ]);
 
-  const playList = await Playlist.aggregatePaginate(aggregate, options);
+  const doc = result?.[0];
+  if (!doc) {
+    throw new ApiError(404, "Playlist not found");
+  }
+
+  const totalPages = Math.max(1, Math.ceil((doc.videosCount || 0) / limit));
+
+  // ✅ return shape compatible with your frontend normalizePlaylistResponse
+  const payload = {
+    docs: [doc],
+    page,
+    limit,
+    totalPages,
+    totalDocs: doc.videosCount || 0,
+  };
+
   return res
     .status(200)
-    .json(new ApiResponse(200, playList, "Fetched playlist successfully"));
+    .json(new ApiResponse(200, payload, "Fetched playlist successfully"));
 });
 
 const addVideoToPlaylist = asyncHandler(async (req, res) => {
   const { playlistId, videoId } = req.params;
 
-  if (!playlistId || !videoId) {
-    throw new ApiError(400, "playlistId and videoId is required");
-  }
+  const pid = toObjectId(playlistId, "playlistId");
+  const vid = toObjectId(videoId, "videoId");
 
-  if (playlistId) {
-    if (!isValidObjectId(playlistId)) {
-      throw new ApiError(200, "Invalid playlistId");
-    }
-  }
-  if (videoId) {
-    if (!isValidObjectId(videoId)) {
-      throw new ApiError(200, "Invalid videoId");
-    }
-  }
+  const videoExists = await Video.exists({ _id: vid });
+  if (!videoExists) throw new ApiError(404, "Video not found");
 
-  const videoExists = await Video.exists({ _id: videoId });
-  if (!videoExists) {
-    throw new ApiError(404, "Video not found");
-  }
-
-  const playList = await Playlist.findByIdAndUpdate(
-    { _id: playlistId, owner: req.user?._id },
-    {
-      $addToSet: { videos: videoId },
-    },
-    {
-      new: true,
-    }
+  const playList = await Playlist.findOneAndUpdate(
+    { _id: pid, owner: req.user?._id },
+    { $addToSet: { videos: vid } },
+    { new: true }
   );
 
-  if (!playList) {
-    throw new ApiError(404, "Playlist not found");
-  }
+  if (!playList) throw new ApiError(404, "Playlist not found");
 
   return res
     .status(200)
@@ -174,39 +226,19 @@ const addVideoToPlaylist = asyncHandler(async (req, res) => {
 const removeVideoFromPlaylist = asyncHandler(async (req, res) => {
   const { playlistId, videoId } = req.params;
 
-  if (!playlistId || !videoId) {
-    throw new ApiError(400, "playlistId and videoId is required");
-  }
+  const pid = toObjectId(playlistId, "playlistId");
+  const vid = toObjectId(videoId, "videoId");
 
-  if (playlistId) {
-    if (!isValidObjectId(playlistId)) {
-      throw new ApiError(200, "Invalid playlistId");
-    }
-  }
-  if (videoId) {
-    if (!isValidObjectId(videoId)) {
-      throw new ApiError(200, "Invalid videoId");
-    }
-  }
+  const videoExists = await Video.exists({ _id: vid });
+  if (!videoExists) throw new ApiError(404, "Video not found");
 
-  const videoExists = await Video.exists({ _id: videoId });
-  if (!videoExists) {
-    throw new ApiError(404, "Video not found");
-  }
-
-  const playList = await Playlist.findByIdAndUpdate(
-    { _id: playlistId, owner: req.user?._id },
-    {
-      $pull: { videos: videoId },
-    },
-    {
-      new: true,
-    }
+  const playList = await Playlist.findOneAndUpdate(
+    { _id: pid, owner: req.user?._id },
+    { $pull: { videos: vid } },
+    { new: true }
   );
 
-  if (!playList) {
-    throw new ApiError(404, "Playlist not found");
-  }
+  if (!playList) throw new ApiError(404, "Playlist not found");
 
   return res
     .status(200)
@@ -215,23 +247,15 @@ const removeVideoFromPlaylist = asyncHandler(async (req, res) => {
 
 const deletePlaylist = asyncHandler(async (req, res) => {
   const { playlistId } = req.params;
-  if (!playlistId) {
-    throw new ApiError(200, "playlistId is required");
-  }
+  const pid = toObjectId(playlistId, "playlistId");
 
-  if (playlistId) {
-    if (!isValidObjectId(playlistId)) {
-      throw new ApiError(200, "Invalid playlistId");
-    }
-  }
-
-  const deletedPlaylist = await Playlist.deleteOne({
-    _id: playlistId,
+  const deleted = await Playlist.deleteOne({
+    _id: pid,
     owner: req.user?._id,
   });
 
-  if (deletedPlaylist.deletedCount === 0) {
-    throw new ApiError(400, "Playlist is not delete");
+  if (deleted.deletedCount === 0) {
+    throw new ApiError(404, "Playlist not found");
   }
 
   return res
@@ -242,32 +266,21 @@ const deletePlaylist = asyncHandler(async (req, res) => {
 const updatePlaylist = asyncHandler(async (req, res) => {
   const { playlistId } = req.params;
   const { name, description } = req.body;
-  if (!playlistId) {
-    throw new ApiError(200, "playlistId is required");
-  }
 
-  if (playlistId) {
-    if (!isValidObjectId(playlistId)) {
-      throw new ApiError(200, "Invalid playlistId");
-    }
-  }
+  const pid = toObjectId(playlistId, "playlistId");
 
-  const playlist = await Playlist.findByIdAndUpdate(
-    { _id: playlistId, owner: req.user?._id },
+  const playlist = await Playlist.findOneAndUpdate(
+    { _id: pid, owner: req.user?._id },
     {
       $set: {
-        name,
-        description,
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description } : {}),
       },
     },
-    {
-      new: true,
-    }
+    { new: true }
   );
 
-  if (!playlist) {
-    throw new ApiError(404, "Playlist not found");
-  }
+  if (!playlist) throw new ApiError(404, "Playlist not found");
 
   return res
     .status(200)

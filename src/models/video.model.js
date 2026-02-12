@@ -22,9 +22,14 @@ const videoSchema = new Schema(
       type: Number, // cloundinary url
       required: [true, "duration is required"],
     },
+    tags: {
+      type: [String],
+      default: [],
+      trim: true,
+    },
     views: {
-      type: String,
-      default: "0",
+      type: Number,
+      default: 0,
     },
     isPublished: {
       type: Boolean,

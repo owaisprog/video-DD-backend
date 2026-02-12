@@ -8,7 +8,7 @@ const playlist = new Schema(
       required: [true, "Name is required"],
     },
     description: {
-      type: Text,
+      type: String,
       required: false,
       default: "",
     },
