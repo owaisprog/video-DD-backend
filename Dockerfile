@@ -17,7 +17,6 @@ RUN --mount=type=cache,target=/home/node/.npm-backend npm ci
 COPY --chown=node:node . .
 
 # Build needs dev deps; then remove dev deps for runtime
-RUN npm run build  
 
 EXPOSE 4000
 CMD ["npm","start"]
