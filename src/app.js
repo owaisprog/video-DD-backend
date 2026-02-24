@@ -4,7 +4,6 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import morgan from "morgan";
 
-// routes
 import userRoutes from "./routes/user.routes.js";
 import videoRoutes from "./routes/video.routes.js";
 import likeRoutes from "./routes/likes.routes.js";
@@ -15,9 +14,9 @@ import watchHistoryRoutes from "./routes/watchHistory.routes.js";
 import playListRoutes from "./routes/playlist.routes.js";
 import geminiChatRoutes from "./routes/geminiChat.route.js";
 
-const app = express();
+import { connectToDatabase } from "./config/db/config.js";
 
-// behind Vercel proxies (also helps req.ip for rate limiters)
+const app = express();
 app.set("trust proxy", 1);
 
 app.use(
@@ -33,6 +32,16 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 app.use(cookieParser());
 
+// Ensure DB is connected before hitting routes
+app.use(async (req, res, next) => {
+  try {
+    await connectToDatabase();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get("/health", (_, res) => res.send("Health is good"));
 
 app.use("/api/v1/users", userRoutes);
@@ -45,4 +54,12 @@ app.use("/api/v1/watch-history", watchHistoryRoutes);
 app.use("/api/v1/playlist", playListRoutes);
 app.use("/api/v1/gemini-chat", geminiChatRoutes);
 
-export default app; // ✅ what Vercel wants :contentReference[oaicite:1]{index=1}
+// Central error handler (shows real DB errors in Vercel logs)
+app.use((err, req, res, next) => {
+  console.error(err);
+  res
+    .status(500)
+    .json({ success: false, message: err.message || "Server Error" });
+});
+
+export default app;
