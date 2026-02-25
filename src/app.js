@@ -13,11 +13,11 @@ import subscriptionRoutes from "./routes/subscription.routes.js";
 import watchHistoryRoutes from "./routes/watchHistory.routes.js";
 import playListRoutes from "./routes/playlist.routes.js";
 import geminiChatRoutes from "./routes/geminiChat.route.js";
-
-import { connectToDatabase } from "./config/db/config.js";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./docs/swagger.js";
 
 const app = express();
-app.set("trust proxy", 1);
+// app.set("trust proxy", 1);
 
 app.use(
   cors({
@@ -26,21 +26,12 @@ app.use(
   })
 );
 
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use(morgan("dev"));
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 app.use(cookieParser());
-
-// Ensure DB is connected before hitting routes
-app.use(async (req, res, next) => {
-  try {
-    await connectToDatabase();
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
 
 app.get("/health", (_, res) => res.send("Health is good"));
 
@@ -55,8 +46,9 @@ app.use("/api/v1/playlist", playListRoutes);
 app.use("/api/v1/gemini-chat", geminiChatRoutes);
 
 // Central error handler (shows real DB errors in Vercel logs)
-app.use((err, req, res, next) => {
+app.use(async (err, req, res, next) => {
   console.error(err);
+
   res
     .status(500)
     .json({ success: false, message: err.message || "Server Error" });
