@@ -107,7 +107,7 @@ export const loginUser = asyncHandler(async (req, res) => {
   const { email, username, password } = req.body;
 
   if (!email && !username) {
-    throw ApiError(400, "username or email is required");
+    throw new ApiError(400, "username or email is required");
   }
 
   const user = await User.findOne({
@@ -115,7 +115,7 @@ export const loginUser = asyncHandler(async (req, res) => {
   });
 
   if (!user) {
-    throw ApiError(400, "User does not exist.");
+    throw new ApiError(400, "User does not exist.");
   }
 
   const isPasswordCorrect = await user.isPasswordCorrect(password);
@@ -127,8 +127,6 @@ export const loginUser = asyncHandler(async (req, res) => {
   const { refreshToken, accessToken } = await generateRefreshAccessToken(
     user._id
   );
-  console.log(refreshAccessToken);
-  console.log(accessToken);
 
   return res
     .status(200)
@@ -166,11 +164,6 @@ export const logoutUser = asyncHandler(async (req, res) => {
       new: true,
     }
   );
-
-  const options = {
-    http: true,
-    secure: true,
-  };
 
   res
     .status(200)

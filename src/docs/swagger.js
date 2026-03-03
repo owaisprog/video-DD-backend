@@ -9,7 +9,7 @@ const options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "YouTube Clone API",
+      title: "Video-DD",
       version: "1.0.0",
       description: "API documentation for YouTube clone backend",
     },

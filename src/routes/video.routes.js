@@ -8,7 +8,9 @@ import {
   getMyAllVideos,
   getSuggestedVideos,
   getVideoById,
+  getVideoProgress,
   publishVideo,
+  publishVideoInQueue,
   togglePublishStatus,
   updateVideo,
   updateVideoMetaData,
@@ -424,6 +426,18 @@ router.get("/get-suggested-videos/:videoId", getSuggestedVideos);
  *       429:
  *         description: Too many requests (rate limited)
  */
+
 router.get("/increment-video-view/:videoId", viewLimiter, videoViewIncrement);
+
+router.post(
+  "/publish-Video-In-Queue",
+  verifyJwt,
+  upload.fields([
+    { name: "video", maxCount: 1 },
+    { name: "thumbnail", maxCount: 1 },
+  ]),
+  publishVideoInQueue
+);
+router.get("/get-video-progress/:videoId", getVideoProgress);
 
 export default router;

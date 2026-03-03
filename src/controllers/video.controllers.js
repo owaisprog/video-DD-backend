@@ -4,6 +4,9 @@ import { uploadFileOnCloudinary } from "../utils/cloudinary.js";
 import { Video } from "../models/video.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import mongoose from "mongoose";
+import { videoProcessingQueue } from "../queues/video.queue.js";
+
+import redis from "../config/redisConfig.js";
 
 export const publishVideo = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
@@ -614,4 +617,73 @@ export const videoViewIncrement = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(new ApiResponse(200, { views: updated.views }, "View incremented"));
+});
+
+// ---------------------------------- V2 ------------------------
+
+export const publishVideoInQueue = asyncHandler(async (req, res) => {
+  const { title, description, isPublished, tags } = req.body;
+
+  const fieldsArray = [
+    { name: "title", value: title },
+    { name: "description", value: description },
+  ];
+
+  for (const { name, value } of fieldsArray) {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      throw new ApiError(400, `${name} is required`);
+    }
+  }
+
+  const videoPath = req.files?.video?.[0]?.path;
+  const thumbnailPath = req.files?.thumbnail?.[0]?.path;
+
+  if (!videoPath) throw new ApiError(400, "Video is required");
+  if (!thumbnailPath) throw new ApiError(400, "Thumbnail is required");
+
+  const video = await Video.create({
+    title,
+    description,
+    isPublished: false,
+    owner: req.user?._id,
+    tags,
+  });
+
+  await videoProcessingQueue.add(
+    "upload-and-publish",
+    {
+      videoId: String(video._id),
+      videoPath,
+      thumbnailPath,
+      isPublished,
+    },
+    {
+      jobId: String(video._id),
+      removeOnComplete: { age: 3600 },
+      removeOnFail: 100,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 2000 },
+    }
+  );
+
+  return res
+    .status(202)
+    .json(
+      new ApiResponse(
+        202,
+        { videoId: video._id },
+        "Video queued for processing"
+      )
+    );
+});
+
+const progressKey = (videoId) => `progress:video:${videoId}`;
+
+export const getVideoProgress = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+  if (!videoId) throw new ApiError(400, "videoId is required");
+
+  const data = await redis.hgetall(progressKey(videoId));
+
+  return res.status(200).json(new ApiResponse(200, "progress", data));
 });
