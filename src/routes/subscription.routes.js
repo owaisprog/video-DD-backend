@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 
 import {
   getSubscribedChannels,
@@ -81,10 +82,14 @@ const router = Router();
  *         description: Unauthorized
  *       404:
  *         description: Channel not found
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router
-  .route("/subscribe-toggle/:channelId")
-  .patch(verifyJwt, toggleSubscription);
+router.route("/subscribe-toggle/:channelId").patch(
+  verifyJwt,
+  rateLimit(60, 60, "rl:sub:toggle"), // 60/min per user
+  toggleSubscription
+);
 
 /**
  * @swagger
@@ -108,10 +113,14 @@ router
  *         description: Invalid channelId
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router
-  .route("/user-subcribed-channel/:channelId")
-  .get(verifyJwt, getUserChannelSubscribers);
+router.route("/user-subcribed-channel/:channelId").get(
+  verifyJwt,
+  rateLimit(120, 60, "rl:sub:channelSubscribers"), // 120/min per user
+  getUserChannelSubscribers
+);
 
 /**
  * @swagger
@@ -135,9 +144,13 @@ router
  *         description: Invalid subscriberId
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router
-  .route("/all-subscribed-channel/:subscriberId")
-  .get(verifyJwt, getSubscribedChannels);
+router.route("/all-subscribed-channel/:subscriberId").get(
+  verifyJwt,
+  rateLimit(120, 60, "rl:sub:allSubscribed"), // 120/min per user
+  getSubscribedChannels
+);
 
 export default router;

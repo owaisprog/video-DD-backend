@@ -6,8 +6,10 @@ import {
   getWatchHistory,
   removeFromWatchHistory,
 } from "../controllers/watchHistory.controllers.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 
 const router = Router();
+router.use(verifyJwt);
 
 /**
  * @swagger
@@ -60,7 +62,7 @@ const router = Router();
  */
 router
   .route("/add-to-watch-history/:videoId")
-  .post(verifyJwt, addToWatchHistory);
+  .post(rateLimit(30, 60, "rl:watchHistory:add"), addToWatchHistory);
 
 /**
  * @swagger
@@ -101,7 +103,9 @@ router
  *       401:
  *         description: Unauthorized
  */
-router.route("/get-watch-history").get(verifyJwt, getWatchHistory);
+router
+  .route("/get-watch-history")
+  .get(rateLimit(60, 60, "rl:watchHistory:get"), getWatchHistory);
 
 /**
  * @swagger
@@ -130,7 +134,7 @@ router.route("/get-watch-history").get(verifyJwt, getWatchHistory);
  */
 router
   .route("/remove-from-watch-history/:videoId")
-  .delete(verifyJwt, removeFromWatchHistory);
+  .delete(rateLimit(30, 60, "rl:watchHistory:remove"), removeFromWatchHistory);
 
 /**
  * @swagger
@@ -146,6 +150,8 @@ router
  *       401:
  *         description: Unauthorized
  */
-router.route("/clear-watch-history").delete(verifyJwt, clearWatchHistory);
+router
+  .route("/clear-watch-history")
+  .delete(rateLimit(5, 60, "rl:watchHistory:clear"), clearWatchHistory);
 
 export default router;

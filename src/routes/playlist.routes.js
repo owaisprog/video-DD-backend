@@ -1,6 +1,7 @@
 // src/routes/playlist.routes.js
 import { Router } from "express";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 
 import {
   createPlaylist,
@@ -70,8 +71,12 @@ const router = Router();
  *         description: Validation error (name/description missing)
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/create-playlist").post(verifyJwt, createPlaylist);
+router
+  .route("/create-playlist")
+  .post(verifyJwt, rateLimit(30, 60, "rl:playlist:create"), createPlaylist);
 
 /**
  * @swagger
@@ -111,10 +116,12 @@ router.route("/create-playlist").post(verifyJwt, createPlaylist);
  *         description: Forbidden (trying to fetch other user's playlists)
  *       400:
  *         description: Invalid userId/page/limit
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/get-user-playlists/user/:userId/:page/:limit")
-  .get(verifyJwt, getUserPlaylists);
+  .get(verifyJwt, rateLimit(120, 60, "rl:playlist:getUser"), getUserPlaylists);
 
 /**
  * @swagger
@@ -154,10 +161,12 @@ router
  *         description: Playlist not found
  *       400:
  *         description: Invalid playlistId/page/limit
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/get-playlist-videos/:playlistId/:page/:limit")
-  .get(verifyJwt, getPlaylistById);
+  .get(verifyJwt, rateLimit(120, 60, "rl:playlist:getById"), getPlaylistById);
 
 /**
  * @swagger
@@ -189,10 +198,16 @@ router
  *         description: Playlist or Video not found
  *       400:
  *         description: Invalid playlistId/videoId
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/add-video-to-playlist/:playlistId/add/:videoId")
-  .patch(verifyJwt, addVideoToPlaylist);
+  .patch(
+    verifyJwt,
+    rateLimit(60, 60, "rl:playlist:addVideo"),
+    addVideoToPlaylist
+  );
 
 /**
  * @swagger
@@ -224,10 +239,16 @@ router
  *         description: Playlist or Video not found
  *       400:
  *         description: Invalid playlistId/videoId
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/remove-video-from-playlist/:playlistId/remove/:videoId")
-  .patch(verifyJwt, removeVideoFromPlaylist);
+  .patch(
+    verifyJwt,
+    rateLimit(60, 60, "rl:playlist:removeVideo"),
+    removeVideoFromPlaylist
+  );
 
 /**
  * @swagger
@@ -259,8 +280,12 @@ router
  *         description: Playlist not found
  *       400:
  *         description: Invalid playlistId
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/update-playlist/:playlistId").patch(verifyJwt, updatePlaylist);
+router
+  .route("/update-playlist/:playlistId")
+  .patch(verifyJwt, rateLimit(60, 3600, "rl:playlist:update"), updatePlaylist);
 
 /**
  * @swagger
@@ -286,7 +311,11 @@ router.route("/update-playlist/:playlistId").patch(verifyJwt, updatePlaylist);
  *         description: Playlist not found
  *       400:
  *         description: Invalid playlistId
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/delete-playlist/:playlistId").delete(verifyJwt, deletePlaylist);
+router
+  .route("/delete-playlist/:playlistId")
+  .delete(verifyJwt, rateLimit(30, 3600, "rl:playlist:delete"), deletePlaylist);
 
 export default router;

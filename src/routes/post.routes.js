@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 
 import {
   createPost,
@@ -81,8 +82,12 @@ const router = Router();
  *         description: Posts fetched successfully
  *       400:
  *         description: Invalid userId or invalid query params
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/get-user-posts").get(getUserPosts);
+router
+  .route("/get-user-posts")
+  .get(rateLimit(120, 60, "rl:post:getUserPosts"), getUserPosts);
 
 /**
  * @swagger
@@ -105,8 +110,14 @@ router.route("/get-user-posts").get(getUserPosts);
  *         description: content is required
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/create-post").post(verifyJwt, createPost);
+router.route("/create-post").post(
+  verifyJwt,
+  rateLimit(20, 60, "rl:post:create"), // 20/min per user
+  createPost
+);
 
 /**
  * @swagger
@@ -138,8 +149,14 @@ router.route("/create-post").post(verifyJwt, createPost);
  *         description: Unauthorized
  *       404:
  *         description: Post not found
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/update-post/:postId").put(verifyJwt, updatePost);
+router.route("/update-post/:postId").put(
+  verifyJwt,
+  rateLimit(60, 3600, "rl:post:update"), // 60/hour per user
+  updatePost
+);
 
 /**
  * @swagger
@@ -165,7 +182,13 @@ router.route("/update-post/:postId").put(verifyJwt, updatePost);
  *         description: Unauthorized
  *       404:
  *         description: Post not found
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/delete-post/:postId").delete(verifyJwt, deletePost);
+router.route("/delete-post/:postId").delete(
+  verifyJwt,
+  rateLimit(30, 3600, "rl:post:delete"), // 30/hour per user
+  deletePost
+);
 
 export default router;

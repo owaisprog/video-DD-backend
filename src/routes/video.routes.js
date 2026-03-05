@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/multer.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 
 import {
   deleteVideo,
@@ -104,6 +105,7 @@ const router = Router();
  */
 router.route("/publish-video").post(
   verifyJwt,
+  rateLimit(10, 3600, "rl:video:publish"),
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
@@ -153,7 +155,11 @@ router.route("/publish-video").post(
  *       200:
  *         description: Video data fetched successfully
  */
-router.get("/get-all-videos", getAllVideos);
+router.get(
+  "/get-all-videos",
+  rateLimit(120, 60, "rl:video:getAll"),
+  getAllVideos
+);
 
 /**
  * @swagger
@@ -195,7 +201,12 @@ router.get("/get-all-videos", getAllVideos);
  *       401:
  *         description: Unauthorized
  */
-router.get("/get-my-all-videos", verifyJwt, getMyAllVideos);
+router.get(
+  "/get-my-all-videos",
+  verifyJwt,
+  rateLimit(120, 60, "rl:video:getMyAll"),
+  getMyAllVideos
+);
 
 /**
  * @swagger
@@ -214,7 +225,11 @@ router.get("/get-my-all-videos", verifyJwt, getMyAllVideos);
  *       200:
  *         description: Video fetched successfully
  */
-router.get("/get-video-by-Id/:videoId", getVideoById);
+router.get(
+  "/get-video-by-Id/:videoId",
+  rateLimit(240, 60, "rl:video:getById"),
+  getVideoById
+);
 
 /**
  * @swagger
@@ -251,6 +266,7 @@ router.get("/get-video-by-Id/:videoId", getVideoById);
 router.put(
   "/update-video/:videoId",
   verifyJwt,
+  rateLimit(20, 3600, "rl:video:updateFile"),
   upload.single("video"),
   updateVideo
 );
@@ -277,7 +293,12 @@ router.put(
  *       404:
  *         description: Video not found
  */
-router.delete("/delete-video/:videoId", verifyJwt, deleteVideo);
+router.delete(
+  "/delete-video/:videoId",
+  verifyJwt,
+  rateLimit(30, 3600, "rl:video:delete"),
+  deleteVideo
+);
 
 /**
  * @swagger
@@ -301,7 +322,12 @@ router.delete("/delete-video/:videoId", verifyJwt, deleteVideo);
  *       400:
  *         description: Video not found / bad request
  */
-router.put("/toggle-publish-status/:videoId", verifyJwt, togglePublishStatus);
+router.put(
+  "/toggle-publish-status/:videoId",
+  verifyJwt,
+  rateLimit(60, 3600, "rl:video:togglePublish"),
+  togglePublishStatus
+);
 
 /**
  * @swagger
@@ -331,7 +357,12 @@ router.put("/toggle-publish-status/:videoId", verifyJwt, togglePublishStatus);
  *       409:
  *         description: videoId is required
  */
-router.patch("/edit-video-data/:videoId", verifyJwt, updateVideoMetaData);
+router.patch(
+  "/edit-video-data/:videoId",
+  verifyJwt,
+  rateLimit(120, 3600, "rl:video:updateMeta"),
+  updateVideoMetaData
+);
 
 /**
  * @swagger
@@ -368,6 +399,7 @@ router.patch("/edit-video-data/:videoId", verifyJwt, updateVideoMetaData);
 router.put(
   "/edit-video-thumbnail/:videoId",
   verifyJwt,
+  rateLimit(30, 3600, "rl:video:updateThumb"),
   upload.single("thumbnail"),
   updateVideoThumbnail
 );
@@ -402,7 +434,11 @@ router.put(
  *       404:
  *         description: Video not found
  */
-router.get("/get-suggested-videos/:videoId", getSuggestedVideos);
+router.get(
+  "/get-suggested-videos/:videoId",
+  rateLimit(120, 60, "rl:video:suggested"),
+  getSuggestedVideos
+);
 
 /**
  * @swagger
@@ -426,18 +462,77 @@ router.get("/get-suggested-videos/:videoId", getSuggestedVideos);
  *       429:
  *         description: Too many requests (rate limited)
  */
-
 router.get("/increment-video-view/:videoId", viewLimiter, videoViewIncrement);
 
+/**
+ * @swagger
+ * /api/v1/video/publish-Video-In-Queue:
+ *   post:
+ *     summary: Publish a new video using queue/worker (multipart/form-data) (requires JWT)
+ *     tags: [Videos]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             allOf:
+ *               - $ref: '#/components/schemas/PublishVideoBody'
+ *               - type: object
+ *                 properties:
+ *                   video:
+ *                     type: string
+ *                     format: binary
+ *                   thumbnail:
+ *                     type: string
+ *                     format: binary
+ *     responses:
+ *       201:
+ *         description: Video publish job queued successfully
+ *       401:
+ *         description: Unauthorized
+ *       409:
+ *         description: Validation error (title/description/video/thumbnail missing)
+ */
 router.post(
   "/publish-Video-In-Queue",
   verifyJwt,
+  rateLimit(10, 3600, "rl:video:publishQueue"),
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
   ]),
   publishVideoInQueue
 );
-router.get("/get-video-progress/:videoId", getVideoProgress);
+
+/**
+ * @swagger
+ * /api/v1/video/get-video-progress/{videoId}:
+ *   get:
+ *     summary: Get video upload/processing progress (public)
+ *     tags: [Videos]
+ *     parameters:
+ *       - in: path
+ *         name: videoId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Video ID
+ *     responses:
+ *       200:
+ *         description: Progress fetched successfully
+ *       400:
+ *         description: Invalid videoId
+ *       404:
+ *         description: Video/job not found
+ *       429:
+ *         description: Too many requests (rate limited)
+ */
+router.get(
+  "/get-video-progress/:videoId",
+  rateLimit(120, 60, "rl:video:progress"),
+  getVideoProgress
+);
 
 export default router;

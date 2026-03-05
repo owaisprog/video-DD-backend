@@ -1,3 +1,4 @@
+import redis from "../config/redisConfig.js";
 import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -7,7 +8,6 @@ export const verifyJwt = asyncHandler(async (req, res, next) => {
     req.cookies?.accessToken ||
     req.header("Authorization")?.replace("Bearer ", "");
 
-  // ✅ token missing => proper message
   if (!accessToken) {
     throw new ApiError(401, "Please login first.");
   }
@@ -18,7 +18,29 @@ export const verifyJwt = asyncHandler(async (req, res, next) => {
       process.env.ACCESS_TOKEN_SECRET
     );
 
-    const user = await User.findById(decodedAccessToken?._id).select(
+    if (!decodedAccessToken.jti) {
+      throw new ApiError(401, "Invalid token structure.");
+    }
+
+    // 🔥 Check blacklist
+    const isBlacklisted = await redis.exists(`bl:${decodedAccessToken.jti}`);
+
+    if (isBlacklisted) {
+      throw new ApiError(401, "Token revoked. Please login again.");
+    }
+
+    // ✅ Cache per user
+    const cacheKey = `user:${decodedAccessToken._id}`;
+
+    const cachedUserData = await redis.get(cacheKey);
+
+    if (cachedUserData) {
+      req.user = JSON.parse(cachedUserData);
+      return next(); // IMPORTANT
+    }
+
+    // Fetch from DB
+    const user = await User.findById(decodedAccessToken._id).select(
       "-password -refreshToken"
     );
 
@@ -26,13 +48,12 @@ export const verifyJwt = asyncHandler(async (req, res, next) => {
       throw new ApiError(401, "Invalid Access Token.");
     }
 
-    req.user = user;
-    next();
-  } catch (error) {
-    // ✅ keep ApiError message as-is
-    if (error instanceof ApiError) throw error;
+    // Store in Redis
+    await redis.set(cacheKey, JSON.stringify(user), "EX", 300);
 
-    // ✅ fix typo: message
+    req.user = user;
+    return next();
+  } catch (error) {
     throw new ApiError(401, error?.message || "Invalid Access Token.");
   }
 });

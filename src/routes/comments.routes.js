@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 import {
   addComment,
   deleteComment,
@@ -106,6 +107,8 @@ const router = Router();
  *         description: Comments fetched successfully
  *       400:
  *         description: Invalid or missing videoId
+ *       429:
+ *         description: Too many requests (rate limited)
  *
  *   post:
  *     summary: Add comment to a video (requires JWT)
@@ -132,11 +135,17 @@ const router = Router();
  *         description: Invalid input (videoId/text missing)
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/video/:videoId")
-  .get(getVideoComments)
-  .post(verifyJwt, addComment);
+  .get(rateLimit(240, 60, "rl:comment:getVideoComments"), getVideoComments)
+  .post(
+    verifyJwt,
+    rateLimit(30, 60, "rl:comment:add"), // 30/min per user
+    addComment
+  );
 
 /**
  * @swagger
@@ -170,6 +179,8 @@ router
  *         description: Not allowed (not owner)
  *       404:
  *         description: Comment not found
+ *       429:
+ *         description: Too many requests (rate limited)
  *
  *   delete:
  *     summary: Delete a comment (requires JWT, only owner)
@@ -194,10 +205,20 @@ router
  *         description: Not allowed (not owner)
  *       404:
  *         description: Comment not found
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/:commentId")
-  .patch(verifyJwt, updateComment)
-  .delete(verifyJwt, deleteComment);
+  .patch(
+    verifyJwt,
+    rateLimit(60, 3600, "rl:comment:update"), // 60/hour per user
+    updateComment
+  )
+  .delete(
+    verifyJwt,
+    rateLimit(30, 3600, "rl:comment:delete"), // 30/hour per user
+    deleteComment
+  );
 
 export default router;

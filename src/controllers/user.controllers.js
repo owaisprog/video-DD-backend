@@ -5,6 +5,8 @@ import { uploadFileOnCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
+import redis from "../config/redisConfig.js";
+
 const generateRefreshAccessToken = async (id) => {
   try {
     const user = await User.findById(id);
@@ -153,6 +155,14 @@ export const loginUser = asyncHandler(async (req, res) => {
 export const logoutUser = asyncHandler(async (req, res) => {
   const id = req.user?._id;
 
+  const accessToken =
+    req.cookies?.accessToken ||
+    req.header("Authorization")?.replace("Bearer ", "");
+
+  if (!accessToken) {
+    throw new ApiError(409, "UnAuthorized, accessToken is required");
+  }
+
   await User.findByIdAndUpdate(
     id,
     {
@@ -164,7 +174,14 @@ export const logoutUser = asyncHandler(async (req, res) => {
       new: true,
     }
   );
+  const decoded = jwt.verify(accessToken, process.env.ACCESS_TOKEN_SECRET);
 
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = decoded.exp - now;
+
+  if (ttl > 0 && decoded.jti) {
+    await redis.set(`bl:${decoded.jti}`, "true", "EX", ttl);
+  }
   res
     .status(200)
     .clearCookie("accessToken", options)
@@ -172,7 +189,7 @@ export const logoutUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "User logout successfully"));
 });
 
-const refreshAccessToken = asyncHandler(async (req, res) => {
+export const refreshAccessToken = asyncHandler(async (req, res) => {
   const incomingRefreshToken =
     req.cookies.refreshToken || req.body.refreshToken;
 
@@ -216,6 +233,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     throw new ApiError(401, error?.message || "Invalid refresh token");
   }
 });
+
 export const updatePassword = asyncHandler(async (req, res) => {
   const { password, newPassword } = req.body;
 

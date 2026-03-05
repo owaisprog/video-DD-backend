@@ -13,6 +13,7 @@ import {
 } from "../controllers/user.controllers.js";
 import upload from "../middlewares/multer.middleware.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 
 const router = Router();
 
@@ -113,8 +114,11 @@ const router = Router();
  *         description: Validation error
  *       409:
  *         description: User already exists or avatar missing
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router.route("/register").post(
+  rateLimit(10, 3600, "rl:user:register"),
   upload.fields([
     { name: "avatar", maxCount: 1 },
     { name: "coverImage", maxCount: 1 },
@@ -141,8 +145,10 @@ router.route("/register").post(
  *         description: User not found or missing username/email
  *       401:
  *         description: Invalid credentials
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/login").post(loginUser);
+router.route("/login").post(rateLimit(10, 60, "rl:user:login"), loginUser);
 
 /**
  * @swagger
@@ -157,8 +163,12 @@ router.route("/login").post(loginUser);
  *         description: Logout successful
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/logout").get(verifyJwt, logoutUser);
+router
+  .route("/logout")
+  .get(verifyJwt, rateLimit(60, 60, "rl:user:logout"), logoutUser);
 
 /**
  * @swagger
@@ -181,8 +191,16 @@ router.route("/logout").get(verifyJwt, logoutUser);
  *         description: Invalid current password
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/change-password").patch(verifyJwt, updatePassword);
+router
+  .route("/change-password")
+  .patch(
+    verifyJwt,
+    rateLimit(10, 3600, "rl:user:changePassword"),
+    updatePassword
+  );
 
 /**
  * @swagger
@@ -197,8 +215,12 @@ router.route("/change-password").patch(verifyJwt, updatePassword);
  *         description: Current user fetched
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/get-current-user").get(verifyJwt, getCurrentUser);
+router
+  .route("/get-current-user")
+  .get(verifyJwt, rateLimit(120, 60, "rl:user:getCurrent"), getCurrentUser);
 
 /**
  * @swagger
@@ -219,8 +241,16 @@ router.route("/get-current-user").get(verifyJwt, getCurrentUser);
  *         description: Account details updated
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/update-account-details").patch(verifyJwt, updateAccountDetails);
+router
+  .route("/update-account-details")
+  .patch(
+    verifyJwt,
+    rateLimit(60, 3600, "rl:user:updateAccountDetails"),
+    updateAccountDetails
+  );
 
 /**
  * @swagger
@@ -247,10 +277,17 @@ router.route("/update-account-details").patch(verifyJwt, updateAccountDetails);
  *         description: Avatar file missing
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/update-avatar")
-  .patch(verifyJwt, upload.single("avatar"), updateAvatar);
+  .patch(
+    verifyJwt,
+    rateLimit(30, 3600, "rl:user:updateAvatar"),
+    upload.single("avatar"),
+    updateAvatar
+  );
 
 /**
  * @swagger
@@ -277,10 +314,17 @@ router
  *         description: Cover image file missing
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/update-coverImage")
-  .patch(verifyJwt, upload.single("coverImage"), updateCoverImage);
+  .patch(
+    verifyJwt,
+    rateLimit(30, 3600, "rl:user:updateCover"),
+    upload.single("coverImage"),
+    updateCoverImage
+  );
 
 /**
  * @swagger
@@ -306,10 +350,16 @@ router
  *         description: Unauthorized
  *       404:
  *         description: Profile not found
+ *       429:
+ *         description: Too many requests (rate limited)
  */
 router
   .route("/user-channel-profile/:channelId")
-  .get(verifyJwt, getUserChannelProfile);
+  .get(
+    verifyJwt,
+    rateLimit(120, 60, "rl:user:channelProfile"),
+    getUserChannelProfile
+  );
 
 /**
  * @swagger
@@ -324,7 +374,15 @@ router
  *         description: Watch history fetched
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/user-watch-history").get(verifyJwt, getUserWatchHistory);
+router
+  .route("/user-watch-history")
+  .get(
+    verifyJwt,
+    rateLimit(60, 60, "rl:user:watchHistory"),
+    getUserWatchHistory
+  );
 
 export default router;

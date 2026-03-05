@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { rateLimit } from "../middlewares/rate-limiter.js";
 import {
   getLikedVideos,
   toggleVideoLike,
@@ -86,8 +87,14 @@ const router = Router();
  *         description: Unauthorized
  *       404:
  *         description: Video not found
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/by-video/:videoId").patch(verifyJwt, toggleVideoLike);
+router.route("/by-video/:videoId").patch(
+  verifyJwt,
+  rateLimit(60, 60, "rl:like:toggleVideo"), // 60/min per user
+  toggleVideoLike
+);
 
 /**
  * @swagger
@@ -106,7 +113,13 @@ router.route("/by-video/:videoId").patch(verifyJwt, toggleVideoLike);
  *               $ref: '#/components/schemas/LikedVideosResponse'
  *       401:
  *         description: Unauthorized
+ *       429:
+ *         description: Too many requests (rate limited)
  */
-router.route("/all-videos").get(verifyJwt, getLikedVideos);
+router.route("/all-videos").get(
+  verifyJwt,
+  rateLimit(120, 60, "rl:like:getAll"), // 120/min per user
+  getLikedVideos
+);
 
 export default router;

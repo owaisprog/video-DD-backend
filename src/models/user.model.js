@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 const userSchema = new Schema(
   {
     username: {
@@ -66,6 +67,7 @@ userSchema.methods.generateAccessToken = function () {
       username: this.username,
       email: this.email,
       fullname: this.fullname,
+      jti: crypto.randomUUID(),
     },
     process.env.ACCESS_TOKEN_SECRET,
     {

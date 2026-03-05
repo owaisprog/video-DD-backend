@@ -5,8 +5,11 @@ import { Video } from "../models/video.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import mongoose from "mongoose";
 import { videoProcessingQueue } from "../queues/video.queue.js";
-
 import redis from "../config/redisConfig.js";
+
+const getVideoRedisKey = (videoId) => {
+  return `video:detail:${videoId}`;
+};
 
 export const publishVideo = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
@@ -214,6 +217,19 @@ export const getAllVideos = asyncHandler(async (req, res) => {
 export const getVideoById = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
 
+  let redisVideoKey = getVideoRedisKey(videoId);
+  const cachedData = await redis.get(redisVideoKey);
+  if (cachedData)
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          JSON.parse(cachedData),
+          "Video data fetched successfully"
+        )
+      );
+
   const video = await Video.aggregate([
     {
       $match: { _id: new mongoose.Types.ObjectId(videoId) },
@@ -252,6 +268,9 @@ export const getVideoById = asyncHandler(async (req, res) => {
       $project: { likes: 0, comments: 0 },
     },
   ]);
+
+  await redis.set(redisVideoKey, JSON.stringify(video), "EX", 300);
+
   return res
     .status(200)
     .json(new ApiResponse(200, video, "Video data fetched successfully"));
@@ -259,7 +278,8 @@ export const getVideoById = asyncHandler(async (req, res) => {
 
 export const updateVideo = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
-  console.log(":::::::::::::::::: update video");
+  let redisVideoKey = getVideoRedisKey(videoId);
+
   const video = req.file.path;
   if (!video) {
     throw new Error(409, "Video is required");
@@ -283,6 +303,7 @@ export const updateVideo = asyncHandler(async (req, res) => {
   if (!updateVideo) {
     throw new ApiError(404, "Video not found");
   }
+  await redis.del(redisVideoKey);
 
   return res
     .status(200)
@@ -291,6 +312,7 @@ export const updateVideo = asyncHandler(async (req, res) => {
 
 export const deleteVideo = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
+  let redisVideoKey = getVideoRedisKey(videoId);
 
   const result = await Video.deleteOne({
     _id: videoId,
@@ -298,6 +320,7 @@ export const deleteVideo = asyncHandler(async (req, res) => {
   if (result.deletedCount === 0) {
     throw new ApiError(404, "Video not found");
   }
+  await redis.del(redisVideoKey);
 
   return res
     .status(200)
@@ -306,6 +329,7 @@ export const deleteVideo = asyncHandler(async (req, res) => {
 
 export const togglePublishStatus = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
+  let redisVideoKey = getVideoRedisKey(videoId);
 
   const video = await Video.findByIdAndUpdate(
     {
@@ -327,12 +351,15 @@ export const togglePublishStatus = asyncHandler(async (req, res) => {
     ? "Video published successfully"
     : "Video unpublished successfully";
 
+  await redis.del(redisVideoKey);
+
   return res.status(200).json(new ApiResponse(200, video, msg));
 });
 
 export const updateVideoMetaData = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
   const { title, description, tags } = req.body;
+  let redisVideoKey = getVideoRedisKey(videoId);
 
   if (!videoId) {
     throw new ApiError(409, "videoId is required");
@@ -354,6 +381,7 @@ export const updateVideoMetaData = asyncHandler(async (req, res) => {
       new: true,
     }
   );
+  await redis.del(redisVideoKey);
 
   return res
     .status(200)
@@ -363,6 +391,7 @@ export const updateVideoMetaData = asyncHandler(async (req, res) => {
 export const updateVideoThumbnail = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
   const thumbnail = req.file?.path;
+  let redisVideoKey = getVideoRedisKey(videoId);
 
   if (!videoId) {
     throw new ApiError(409, "videoId is required");
@@ -387,6 +416,7 @@ export const updateVideoThumbnail = asyncHandler(async (req, res) => {
       new: true,
     }
   );
+  await redis.del(redisVideoKey);
 
   return res
     .status(200)
