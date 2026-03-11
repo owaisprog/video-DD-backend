@@ -3,7 +3,7 @@ import path from "path";
 
 const routesGlob = path
   .resolve(process.cwd(), "src/routes/**/*.js")
-  .replace(/\\/g, "/"); // ✅ IMPORTANT (fix for windows/backslash)
+  .replace(/\\/g, "/"); //   IMPORTANT (fix for windows/backslash)
 
 const options = {
   definition: {
@@ -15,7 +15,7 @@ const options = {
     },
     servers: [{ url: "http://localhost:4000", description: "Local server" }],
 
-    // ✅ ADD ONE DEFAULT PATH (so UI must show something)
+    //   ADD ONE DEFAULT PATH (so UI must show something)
     paths: {
       "/health": {
         get: {
@@ -39,11 +39,11 @@ const options = {
     },
   },
 
-  apis: [routesGlob], // ✅ now swagger will scan your routes
+  apis: [routesGlob], //   now swagger will scan your routes
 };
 
 export const swaggerSpec = swaggerJSDoc(options);
 
-// ✅ Debug (see in terminal)
-console.log("✅ Swagger scanning:", routesGlob);
-console.log("✅ Swagger paths found:", Object.keys(swaggerSpec.paths || {}));
+//   Debug (see in terminal)
+console.log("  Swagger scanning:", routesGlob);
+console.log("  Swagger paths found:", Object.keys(swaggerSpec.paths || {}));

@@ -12,6 +12,7 @@ import {
   getVideoProgress,
   publishVideo,
   publishVideoInQueue,
+  searchVideo,
   togglePublishStatus,
   updateVideo,
   updateVideoMetaData,
@@ -227,6 +228,7 @@ router.get(
  */
 router.get(
   "/get-video-by-Id/:videoId",
+  verifyJwt,
   rateLimit(240, 60, "rl:video:getById"),
   getVideoById
 );
@@ -534,5 +536,7 @@ router.get(
   rateLimit(120, 60, "rl:video:progress"),
   getVideoProgress
 );
+
+router.post("/search", searchVideo);
 
 export default router;

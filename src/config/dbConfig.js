@@ -1,7 +1,7 @@
 // src/config/db/config.js
 import mongoose from "mongoose";
 
-const URI = process.env.MONGOOSE_URI || process.env.MONGODB_URI;
+const URI = process.env.MONGOOSE_URI;
 if (!URI) throw new Error("Missing MONGOOSE_URI (or MONGODB_URI)");
 
 // Fail fast instead of buffering queries for 10s

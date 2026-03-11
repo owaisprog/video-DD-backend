@@ -29,7 +29,7 @@ export const verifyJwt = asyncHandler(async (req, res, next) => {
       throw new ApiError(401, "Token revoked. Please login again.");
     }
 
-    // ✅ Cache per user
+    //   Cache per user
     const cacheKey = `user:${decodedAccessToken._id}`;
 
     const cachedUserData = await redis.get(cacheKey);

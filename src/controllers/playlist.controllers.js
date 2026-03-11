@@ -41,7 +41,7 @@ const getUserPlaylists = asyncHandler(async (req, res) => {
 
   const ownerId = toObjectId(userId, "userId");
 
-  // ✅ security: don’t allow fetching other users playlists
+  //   security: don’t allow fetching other users playlists
   if (String(req.user?._id) !== String(ownerId)) {
     throw new ApiError(403, "Forbidden");
   }
@@ -113,10 +113,10 @@ const getPlaylistById = asyncHandler(async (req, res) => {
   const pid = toObjectId(playlistId, "playlistId");
   const skip = (page - 1) * limit;
 
-  // ✅ This endpoint should paginate VIDEOS inside the playlist
+  //   This endpoint should paginate VIDEOS inside the playlist
   // We'll return: { docs:[playlistDocWithVideosPage], page, totalPages }
   const result = await Playlist.aggregate([
-    // ✅ ensure user only accesses their own playlist
+    //   ensure user only accesses their own playlist
     { $match: { _id: pid, owner: toObjectId(String(req.user?._id), "owner") } },
 
     // compute total video count from ids array
@@ -126,7 +126,7 @@ const getPlaylistById = asyncHandler(async (req, res) => {
       },
     },
 
-    // ✅ paginated lookup of Videos
+    //   paginated lookup of Videos
     {
       $lookup: {
         from: "videos",
@@ -187,7 +187,7 @@ const getPlaylistById = asyncHandler(async (req, res) => {
 
   const totalPages = Math.max(1, Math.ceil((doc.videosCount || 0) / limit));
 
-  // ✅ return shape compatible with your frontend normalizePlaylistResponse
+  //   return shape compatible with your frontend normalizePlaylistResponse
   const payload = {
     docs: [doc],
     page,

@@ -9,7 +9,7 @@ export const viewLimiter = rateLimit({
 
   // per-IP + per-video (IPv6-safe)
   keyGenerator: (req) => {
-    const ipKey = ipKeyGenerator(req.ip); // ✅ fixes ERR_ERL_KEY_GEN_IPV6
+    const ipKey = ipKeyGenerator(req.ip); //   fixes ERR_ERL_KEY_GEN_IPV6
     const videoId = req.params?.videoId ?? "no-video-id";
     return `${ipKey}:${videoId}`;
   },

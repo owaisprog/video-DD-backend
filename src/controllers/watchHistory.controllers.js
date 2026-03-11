@@ -7,7 +7,7 @@ import asyncHandler from "../utils/asyncHandler.js";
 export const addToWatchHistory = asyncHandler(async (req, res) => {
   const userId = req.user._id;
 
-  // ✅ BACKWARD COMPATIBLE:
+  //  BACKWARD COMPATIBLE:
   // supports BOTH: /add-to-watch-history/:videoId  AND body.videoId
   const videoId = req.params.videoId || req.body.videoId;
 
@@ -39,22 +39,29 @@ export const addToWatchHistory = asyncHandler(async (req, res) => {
 });
 
 export const getWatchHistory = asyncHandler(async (req, res) => {
-  const userId = req.user._id;
+  const rawUserId = req.user._id; // or req.params.userId if you want route param
 
-  let { page = 1, limit, query, sortBy, sortType } = req.query;
+  if (!mongoose.Types.ObjectId.isValid(rawUserId)) {
+    return res.status(400).json({ message: "Invalid userId" });
+  }
 
-  page = Number(page);
-  limit = Number(limit);
+  const userId = new mongoose.Types.ObjectId(rawUserId);
 
-  const options = {
-    page,
-    limit,
+  let {
+    page = 1,
+    limit = 10,
+    sortBy = "createdAt",
+    sortType = "desc",
+  } = req.query;
+
+  page = Number(page) || 1;
+  limit = Number(limit) || 10;
+
+  const sort = {
+    [sortBy]: sortType === "asc" ? 1 : -1,
+    _id: 1,
   };
 
-  let match = {};
-
-  match.owner = new mongoose.Types.ObjectId(req?.user._id);
-  const sort = { [sortType]: sortBy === "asc" ? -1 : 1, _id: 1 };
   const aggregate = WatchHistory.aggregate([
     { $match: { user: userId } },
     {
@@ -65,23 +72,30 @@ export const getWatchHistory = asyncHandler(async (req, res) => {
         as: "video",
       },
     },
-    { $unwind: "$video" },
+    {
+      $unwind: {
+        path: "$video",
+        preserveNullAndEmptyArrays: true,
+      },
+    },
     { $sort: sort },
   ]);
 
-  const watchHistory = await WatchHistory.aggregatePaginate(aggregate, options);
+  const watchHistory = await WatchHistory.aggregatePaginate(aggregate, {
+    page,
+    limit,
+  });
 
   return res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        "Watch history retrieved successfully.",
-        watchHistory
+        watchHistory,
+        "Watch history retrieved successfully."
       )
     );
 });
-
 export const removeFromWatchHistory = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const { videoId } = req.params;

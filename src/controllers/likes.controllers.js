@@ -5,7 +5,8 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { Video } from "../models/video.model.js";
 import { Comment } from "../models/comments.model.js";
 import mongoose from "mongoose";
-
+import { getVideoRedisKey } from "../utils/redisKeys.js";
+import redis from "../config/redisConfig.js";
 export const toggleVideoLike = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
 
@@ -13,16 +14,23 @@ export const toggleVideoLike = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(videoId))
     throw new ApiError(400, "Invalid videoId");
 
-  const findVideo = await Video.findById(videoId);
+  const redisVideoKey = getVideoRedisKey(videoId);
+
+  const videoObjectId = new mongoose.Types.ObjectId(videoId);
+  const userObjectId = new mongoose.Types.ObjectId(req.user._id);
+
+  const findVideo = await Video.findById(videoObjectId);
   if (!findVideo) throw new ApiError(404, "Video not found");
 
-  // ✅ atomic: delete if exists
+  // -------- CHECK IF LIKE EXISTS --------
   const deleted = await Like.findOneAndDelete({
-    video: videoId,
-    likedBy: req.user._id,
+    video: videoObjectId,
+    likedBy: userObjectId,
   });
 
   if (deleted) {
+    await redis.del(redisVideoKey);
+
     return res
       .status(200)
       .json(
@@ -30,12 +38,13 @@ export const toggleVideoLike = asyncHandler(async (req, res) => {
       );
   }
 
-  // ✅ create if not exists (handle race duplicates)
   try {
     const createdLike = await Like.create({
-      video: videoId,
-      likedBy: req.user._id,
+      video: videoObjectId,
+      likedBy: userObjectId,
     });
+
+    await redis.del(redisVideoKey);
 
     return res
       .status(200)
@@ -47,12 +56,12 @@ export const toggleVideoLike = asyncHandler(async (req, res) => {
         )
       );
   } catch (err) {
-    // ✅ if two requests race, second one hits duplicate key => treat as "liked"
     if (err?.code === 11000) {
       return res
         .status(200)
         .json(new ApiResponse(200, { liked: true }, "Like already exists"));
     }
+
     throw err;
   }
 });

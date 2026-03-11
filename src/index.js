@@ -1,4 +1,4 @@
-// src/server.js
+// src/index.js or src/server.js
 import "dotenv/config";
 import app from "./app.js";
 import redis from "./config/redisConfig.js";
@@ -7,13 +7,24 @@ import bullmqWorkerRedis from "./config/bullmqWorkerRedis.js";
 
 const port = process.env.PORT || 4000;
 
-app.listen(port, async () => {
-  await connectToDatabase();
+const start = async () => {
+  try {
+    await connectToDatabase();
+    console.log("Mongo connected");
 
-  const rediss = await redis.ping();
-  console.log("Redis ping OK", rediss);
-  const workerPing = await bullmqWorkerRedis.ping();
-  console.log("BullMQ Redis ping OK", workerPing);
+    await redis.ping();
+    console.log("Redis ping OK");
 
-  console.log(`Server is running on PORT:${port}`);
-});
+    await bullmqWorkerRedis.ping();
+    console.log("BullMQ Redis ping OK");
+
+    app.listen(port, () => {
+      console.log(`Server is running on PORT:${port}`);
+    });
+  } catch (error) {
+    console.error("Startup failed:", error);
+    process.exit(1);
+  }
+};
+
+start();

@@ -23,8 +23,8 @@ const generateRefreshAccessToken = async (id) => {
 };
 
 const options = {
-  httpOnly: true, // ✅ was "http: true" (wrong)
-  secure: process.env.NODE_ENV === "production", // ✅ don't break localhost
+  httpOnly: true, //   was "http: true" (wrong)
+  secure: process.env.NODE_ENV === "production", //   don't break localhost
   sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
   path: "/",
 };

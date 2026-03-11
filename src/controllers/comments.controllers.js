@@ -3,6 +3,9 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { Comment } from "../models/comments.model.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import { getVideoCommentKey } from "../utils/redisKeys.js";
+import redis from "../config/redisConfig.js";
+import { EX } from "../constants.js";
 
 const clampInt = (val, def, min, max) => {
   const n = Number.parseInt(String(val), 10);
@@ -16,6 +19,7 @@ export const getVideoComments = asyncHandler(async (req, res) => {
   if (!videoId) {
     throw new ApiError(400, "videoId is required");
   }
+
   if (!mongoose.Types.ObjectId.isValid(videoId)) {
     throw new ApiError(400, "Invalid videoId");
   }
@@ -23,7 +27,16 @@ export const getVideoComments = asyncHandler(async (req, res) => {
   const page = clampInt(req.query.page, 1, 1, 10_000);
   const limit = clampInt(req.query.limit, 10, 1, 50);
 
-  // Aggregation to also include user fields
+  const versionKey = getVideoCommentsVersionKey(videoId);
+  const version = Number((await redis.get(versionKey)) || 1);
+
+  const commentKey = getVideoCommentKey(videoId, page, limit, version);
+
+  const cached = await redis.get(commentKey);
+  if (cached) {
+    return res.status(200).json(JSON.parse(cached));
+  }
+
   const pipeline = [
     { $match: { video: new mongoose.Types.ObjectId(videoId) } },
     { $sort: { createdAt: -1 } },
@@ -33,7 +46,15 @@ export const getVideoComments = asyncHandler(async (req, res) => {
         localField: "user",
         foreignField: "_id",
         as: "user",
-        pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],
+        pipeline: [
+          {
+            $project: {
+              username: 1,
+              fullname: 1,
+              avatar: 1,
+            },
+          },
+        ],
       },
     },
     { $unwind: "$user" },
@@ -55,15 +76,19 @@ export const getVideoComments = asyncHandler(async (req, res) => {
     limit,
   });
 
-  return res
-    .status(200)
-    .json(new ApiResponse(200, comments, "Fetched all comments successfully"));
-});
+  const responsePayload = new ApiResponse(
+    200,
+    comments,
+    "Fetched all comments successfully"
+  );
 
+  await redis.set(commentKey, JSON.stringify(responsePayload), "EX", EX);
+
+  return res.status(200).json(responsePayload);
+});
 export const addComment = asyncHandler(async (req, res) => {
   const videoId = req.params.videoId || req.body.videoId;
   const textRaw = req.body?.text;
-
   const text = typeof textRaw === "string" ? textRaw.trim() : "";
 
   if (!videoId) throw new ApiError(400, "videoId is required");
@@ -78,7 +103,6 @@ export const addComment = asyncHandler(async (req, res) => {
     user: req.user?._id,
   });
 
-  // Return comment with user populated (same shape as list)
   const created = await Comment.aggregate([
     { $match: { _id: comment._id } },
     {
@@ -93,6 +117,12 @@ export const addComment = asyncHandler(async (req, res) => {
     { $unwind: "$user" },
     { $project: { text: 1, video: 1, user: 1, createdAt: 1, updatedAt: 1 } },
   ]);
+
+  try {
+    await bumpVideoCommentsVersion(videoId);
+  } catch (err) {
+    console.error("Failed to invalidate comments cache after create:", err);
+  }
 
   return res
     .status(201)
@@ -135,6 +165,12 @@ export const updateComment = asyncHandler(async (req, res) => {
     { $project: { text: 1, video: 1, user: 1, createdAt: 1, updatedAt: 1 } },
   ]);
 
+  try {
+    await bumpVideoCommentsVersion(String(existing.video));
+  } catch (err) {
+    console.error("Failed to invalidate comments cache after update:", err);
+  }
+
   return res
     .status(200)
     .json(new ApiResponse(200, updated?.[0], "Comment updated successfully"));
@@ -155,7 +191,15 @@ export const deleteComment = asyncHandler(async (req, res) => {
     throw new ApiError(403, "You are not allowed to delete this comment");
   }
 
+  const videoId = String(existing.video);
+
   await Comment.deleteOne({ _id: commentId });
+
+  try {
+    await bumpVideoCommentsVersion(videoId);
+  } catch (err) {
+    console.error("Failed to invalidate comments cache after delete:", err);
+  }
 
   return res
     .status(200)

@@ -6,11 +6,13 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import mongoose from "mongoose";
 import { videoProcessingQueue } from "../queues/video.queue.js";
 import redis from "../config/redisConfig.js";
-
-const getVideoRedisKey = (videoId) => {
-  return `video:detail:${videoId}`;
-};
-
+import { getVideoRedisKey } from "../utils/redisKeys.js";
+import {
+  escapeRegex,
+  normalizeTags,
+  progressKey,
+  tokenizeTags,
+} from "../utils/helperFunctions.js";
 export const publishVideo = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
 
@@ -217,19 +219,39 @@ export const getAllVideos = asyncHandler(async (req, res) => {
 export const getVideoById = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
 
-  let redisVideoKey = getVideoRedisKey(videoId);
+  if (!mongoose.Types.ObjectId.isValid(videoId)) {
+    return res.status(400).json(new ApiResponse(400, null, "Invalid video id"));
+  }
+
+  const currentUserId = req.user?._id ? String(req.user._id) : null;
+  const redisVideoKey = getVideoRedisKey(videoId);
+
   const cachedData = await redis.get(redisVideoKey);
-  if (cachedData)
+
+  // ---------------- CACHE HIT ----------------
+  if (cachedData) {
+    const parsedData = JSON.parse(cachedData);
+
+    const likesUserIds = parsedData.likesUserIds || [];
+
+    parsedData.likedBy = currentUserId
+      ? likesUserIds.some((id) => String(id) === String(currentUserId))
+      : false;
+
+    delete parsedData.likesUserIds;
+
     return res
       .status(200)
       .json(
         new ApiResponse(
           200,
-          JSON.parse(cachedData),
-          "Video data fetched successfully"
+          parsedData,
+          "Video data fetched successfully from cache"
         )
       );
+  }
 
+  // ---------------- DATABASE QUERY ----------------
   const video = await Video.aggregate([
     {
       $match: { _id: new mongoose.Types.ObjectId(videoId) },
@@ -243,37 +265,71 @@ export const getVideoById = asyncHandler(async (req, res) => {
       },
     },
     {
+      $unwind: {
+        path: "$owner",
+        preserveNullAndEmptyArrays: true,
+      },
+    },
+    {
       $lookup: {
         from: "likes",
-        foreignField: "video",
         localField: "_id",
+        foreignField: "video",
         as: "likes",
       },
     },
     {
       $lookup: {
         from: "comments",
-        foreignField: "video",
         localField: "_id",
+        foreignField: "video",
         as: "comments",
       },
     },
     {
       $addFields: {
         likesCount: { $size: "$likes" },
-        commentCounts: { $size: "$comments" },
+        commentsCount: { $size: "$comments" },
+        likesUserIds: {
+          $map: {
+            input: "$likes",
+            as: "like",
+            in: "$$like.likedBy",
+          },
+        },
       },
     },
     {
-      $project: { likes: 0, comments: 0 },
+      $project: {
+        likes: 0,
+        comments: 0,
+        "owner.password": 0,
+        "owner.refreshToken": 0,
+        "owner.watchHistory": 0,
+      },
     },
   ]);
 
-  await redis.set(redisVideoKey, JSON.stringify(video), "EX", 300);
+  if (!video || video.length === 0) {
+    return res.status(404).json(new ApiResponse(404, null, "Video not found"));
+  }
+
+  const videoData = video[0];
+
+  const likesUserIds = videoData.likesUserIds || [];
+
+  videoData.likedBy = currentUserId
+    ? likesUserIds.some((id) => String(id) === String(currentUserId))
+    : false;
+
+  // cache WITHOUT likedBy
+  await redis.set(redisVideoKey, JSON.stringify(videoData), "EX", 300);
+
+  delete videoData.likesUserIds;
 
   return res
     .status(200)
-    .json(new ApiResponse(200, video, "Video data fetched successfully"));
+    .json(new ApiResponse(200, videoData, "Video data fetched successfully"));
 });
 
 export const updateVideo = asyncHandler(async (req, res) => {
@@ -422,25 +478,6 @@ export const updateVideoThumbnail = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, "Video data updated successfuly", updatedData));
 });
-
-const escapeRegex = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const normalizeTags = (tags = []) => [
-  ...new Set(tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean)),
-];
-
-const tokenizeTags = (tags = []) => {
-  const tokens = [];
-  for (const t of tags) {
-    const words = String(t)
-      .toLowerCase()
-      .trim()
-      .split(/[\s,._-]+/g) // split by spaces/punct
-      .filter((w) => w.length >= 2);
-    tokens.push(...words);
-  }
-  return [...new Set(tokens)];
-};
 
 export const getSuggestedVideos = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
@@ -707,8 +744,6 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
     );
 });
 
-const progressKey = (videoId) => `progress:video:${videoId}`;
-
 export const getVideoProgress = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
   if (!videoId) throw new ApiError(400, "videoId is required");
@@ -716,4 +751,143 @@ export const getVideoProgress = asyncHandler(async (req, res) => {
   const data = await redis.hgetall(progressKey(videoId));
 
   return res.status(200).json(new ApiResponse(200, "progress", data));
+});
+export const searchVideo = asyncHandler(async (req, res) => {
+  const rawQuery = String(req.body?.query ?? "").trim();
+  const page = Math.max(Number(req.body?.page ?? 1), 1);
+  const limit = Math.min(Math.max(Number(req.body?.limit ?? 12), 1), 50);
+
+  if (!rawQuery) {
+    return res.status(400).json({
+      success: false,
+      message: "query is required",
+      data: null,
+    });
+  }
+
+  const searchStage = {
+    index: "videoSearch",
+    compound: {
+      should: [
+        {
+          text: {
+            query: rawQuery,
+            path: "title",
+            score: { boost: { value: 8 } },
+          },
+        },
+        {
+          text: {
+            query: rawQuery,
+            path: "tags",
+            score: { boost: { value: 5 } },
+          },
+        },
+        {
+          text: {
+            query: rawQuery,
+            path: "description",
+            score: { boost: { value: 2 } },
+          },
+        },
+      ],
+      minimumShouldMatch: 1,
+      filter: [
+        {
+          equals: {
+            path: "isPublished",
+            value: true,
+          },
+        },
+      ],
+    },
+  };
+
+  const [docs, meta] = await Promise.all([
+    Video.aggregate([
+      { $search: searchStage },
+      {
+        $project: {
+          title: 1,
+          description: 1,
+          thumbnail: 1,
+          videoFile: 1,
+          duration: 1,
+          tags: 1,
+          views: 1,
+          isPublished: 1,
+          owner: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          score: { $meta: "searchScore" },
+        },
+      },
+      { $sort: { score: -1, createdAt: -1 } },
+      { $skip: (page - 1) * limit },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "users",
+          localField: "owner",
+          foreignField: "_id",
+          as: "ownerDetails",
+          pipeline: [
+            {
+              $project: {
+                _id: 1,
+                fullname: 1,
+                username: 1,
+                avatar: 1,
+                email: 1,
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          // owner is stored as array in your DB, so unwind ownerDetails accordingly
+          ownerDetails: { $arrayElemAt: ["$ownerDetails", 0] },
+        },
+      },
+    ]),
+
+    Video.aggregate([
+      {
+        $searchMeta: {
+          index: "videoSearch",
+          compound: {
+            should: [
+              { text: { query: rawQuery, path: "title" } },
+              { text: { query: rawQuery, path: "tags" } },
+              { text: { query: rawQuery, path: "description" } },
+            ],
+            minimumShouldMatch: 1,
+            filter: [{ equals: { path: "isPublished", value: true } }],
+          },
+          count: { type: "total" },
+        },
+      },
+    ]),
+  ]);
+
+  const totalDocs = meta?.[0]?.count?.total ?? 0;
+  const totalPages = Math.ceil(totalDocs / limit);
+
+  return res.status(200).json({
+    success: true,
+    message: "Videos fetched successfully",
+    data: {
+      docs,
+      totalDocs,
+      limit,
+      page,
+      totalPages,
+      pagingCounter: totalDocs === 0 ? 0 : (page - 1) * limit + 1,
+      hasPrevPage: page > 1,
+      hasNextPage: page < totalPages,
+      prevPage: page > 1 ? page - 1 : null,
+      nextPage: page < totalPages ? page + 1 : null,
+    },
+  });
 });

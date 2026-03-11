@@ -31,9 +31,6 @@ createBullBoard({
 });
 
 const app = express();
-
-app.use("/  ", serverAdapter.getRouter());
-
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN,

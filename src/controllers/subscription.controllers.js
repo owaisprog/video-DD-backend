@@ -4,7 +4,8 @@ import { Subscription } from "../models/subscription.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-
+import redis from "../config/redisConfig.js";
+import { EX } from "../constants.js";
 /**
  * Toggle subscription for logged in user to a channel
  * route: POST/GET whatever you use -> /subscriptions/toggle/:channelId
@@ -25,7 +26,7 @@ export const toggleSubscription = asyncHandler(async (req, res) => {
   const channelExists = await User.findById(channelId).select("_id");
   if (!channelExists) throw new ApiError(404, "Channel doesn't exist");
 
-  // ✅ delete if already subscribed
+  //   delete if already subscribed
   const deleted = await Subscription.findOneAndDelete({
     subscriber: req.user._id,
     channel: channelId,
@@ -43,7 +44,7 @@ export const toggleSubscription = asyncHandler(async (req, res) => {
       );
   }
 
-  // ✅ otherwise create subscription
+  //   otherwise create subscription
   try {
     const subscription = await Subscription.create({
       subscriber: req.user._id,
@@ -86,19 +87,35 @@ export const getUserChannelSubscribers = asyncHandler(async (req, res) => {
   if (!channelId) throw new ApiError(400, "channelId is required");
   if (!isValidObjectId(channelId)) throw new ApiError(400, "Invalid channelId");
 
+  const redisKey = `subscription:${channelId}`;
+
+  const cached = await redis.get(redisKey);
+
+  if (cached) {
+    return res.status(200).json(JSON.parse(cached));
+  }
+
   const subscribers = await Subscription.aggregate([
     {
       $match: {
-        channel: new mongoose.Types.ObjectId(channelId), // ✅ correct field
+        channel: new mongoose.Types.ObjectId(channelId),
       },
     },
     {
       $lookup: {
-        from: "users", // ✅ correct collection name (most likely)
-        localField: "subscriber", // ✅ correct field
+        from: "users",
+        localField: "subscriber",
         foreignField: "_id",
         as: "subscriber",
-        pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],
+        pipeline: [
+          {
+            $project: {
+              username: 1,
+              fullname: 1,
+              avatar: 1,
+            },
+          },
+        ],
       },
     },
     { $unwind: "$subscriber" },
@@ -114,11 +131,15 @@ export const getUserChannelSubscribers = asyncHandler(async (req, res) => {
     { $sort: { createdAt: -1 } },
   ]);
 
-  return res
-    .status(200)
-    .json(
-      new ApiResponse(200, subscribers, "Successfully fetched all subscribers")
-    );
+  const responsePayload = new ApiResponse(
+    200,
+    subscribers,
+    "Successfully fetched all subscribers"
+  );
+
+  await redis.set(redisKey, JSON.stringify(responsePayload), "EX", EX);
+
+  return res.status(200).json(responsePayload);
 });
 
 /**
@@ -135,13 +156,13 @@ export const getSubscribedChannels = asyncHandler(async (req, res) => {
   const subscribedChannels = await Subscription.aggregate([
     {
       $match: {
-        subscriber: new mongoose.Types.ObjectId(subscriberId), // ✅ correct field
+        subscriber: new mongoose.Types.ObjectId(subscriberId), //   correct field
       },
     },
     {
       $lookup: {
-        from: "users", // ✅ correct collection
-        localField: "channel", // ✅ correct field
+        from: "users", //   correct collection
+        localField: "channel", //   correct field
         foreignField: "_id",
         as: "channel",
         pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],

@@ -58,7 +58,7 @@ export const getUserPosts = asyncHandler(async (req, res) => {
     { $match: match },
     { $sort: sort },
 
-    // ✅ FIX: correct collection name is "users"
+    //   FIX: correct collection name is "users"
     {
       $lookup: {
         from: "users",
@@ -66,13 +66,15 @@ export const getUserPosts = asyncHandler(async (req, res) => {
         foreignField: "_id",
         as: "owner",
         pipeline: [
-          // ✅ only send what you need
-          { $project: { _id: 1, username: 1, fullname: 1, avatar: 1, email: 1 } },
+          //   only send what you need
+          {
+            $project: { _id: 1, username: 1, fullname: 1, avatar: 1, email: 1 },
+          },
         ],
       },
     },
 
-    // ✅ convert owner array -> owner object (or null)
+    //   convert owner array -> owner object (or null)
     { $unwind: { path: "$owner", preserveNullAndEmptyArrays: true } },
 
     {
@@ -118,7 +120,7 @@ export const updatePost = asyncHandler(async (req, res) => {
   }
 
   const updatedPost = await Post.findOneAndUpdate(
-    { _id: pid, owner: req.user?._id }, // ✅ owner protected
+    { _id: pid, owner: req.user?._id }, //   owner protected
     { $set: { content: String(content).trim() } },
     { new: true }
   );
@@ -138,7 +140,7 @@ export const deletePost = asyncHandler(async (req, res) => {
 
   const deleted = await Post.deleteOne({
     _id: pid,
-    owner: req.user?._id, // ✅ owner protected
+    owner: req.user?._id, //   owner protected
   });
 
   if (deleted.deletedCount === 0) {
