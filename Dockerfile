@@ -18,5 +18,5 @@ COPY --chown=node:node . .
 
 # Build needs dev deps; then remove dev deps for runtime
 
-EXPOSE 4000
+EXPOSE 10000
 CMD ["npm","start"]

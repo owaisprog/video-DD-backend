@@ -21,7 +21,6 @@ import { createBullBoard } from "@bull-board/api";
 import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { ExpressAdapter } from "@bull-board/express";
 
-import "./workers/video.worker.js";
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath("/arena");
 
@@ -41,7 +40,6 @@ app.use(
 // Swagger docs
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// Bull board for tracking queues
 app.use("/arena", serverAdapter.getRouter());
 
 // Logging & body parsing

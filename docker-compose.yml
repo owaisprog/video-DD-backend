@@ -1,18 +1,58 @@
-# version: "3.8"
+services:
+  backend:
+    build: .
+    command: npm start
+    ports:
+      - "10000:10000"
+    env_file:
+      - ./.env
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /usr/src/app/backend/src
 
-# services:
-#   backend:
-#     build: .
-#     ports:
-#       - "4000:4000"
-#     env_file:
-#       - ./.env
-#     environment:
-#       REDIS_URL: redis://redis:6379
-#     depends_on:
-#       - redis
+        - action: sync+restart
+          path: ./public
+          target: /usr/src/app/backend/public
 
-#   redis:
-#     image: redis/redis-stack-server:latest
-#     ports:
-#       - "6379:6379"
+        - action: rebuild
+          path: ./package.json
+
+        - action: rebuild
+          path: ./package-lock.json
+
+        - action: rebuild
+          path: ./Dockerfile
+
+        - action: rebuild
+          path: ./.dockerignore
+
+        - action: rebuild
+          path: ./.env
+
+  worker:
+    build: .
+    command: npm run worker
+    env_file:
+      - ./.env
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /usr/src/app/backend/src
+
+        - action: rebuild
+          path: ./package.json
+
+        - action: rebuild
+          path: ./package-lock.json
+
+        - action: rebuild
+          path: ./Dockerfile
+
+        - action: rebuild
+          path: ./.dockerignore
+
+        - action: rebuild
+          path: ./.env
