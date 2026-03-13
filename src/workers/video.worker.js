@@ -26,9 +26,6 @@ export const videoProcessingWorker = new Worker(
     if (!thumbnailPath)
       throw new Error("Missing required field: thumbnailPath");
 
-    // (Optional) BullMQ progress (if using bull-board etc.)
-    // await job.updateProgress(5);
-
     try {
       await setVideoProgress(videoId, {
         progress: 5,
@@ -39,29 +36,30 @@ export const videoProcessingWorker = new Worker(
       await setVideoProgress(videoId, {
         progress: 10,
         status: "uploading",
-        message: "Uploading video & thumbnail...",
+        message: "Starting upload to Cloudinary...",
       });
 
-      // Start ticker so progress doesn’t look stuck during long uploads
+      // Ticker keeps progress moving visually during long uploads
       const stopTicker = startProgressTicker({ videoId, from: 15, max: 55 });
 
-      // Uploads with milestone updates
+      // ✅ Upload video with "video" resourceType — triggers eager HLS transforms
+      // ✅ Upload thumbnail with "image" resourceType
       const videoPromise = (async () => {
-        const v = await uploadFileOnCloudinary(videoPath);
+        const v = await uploadFileOnCloudinary(videoPath, "video");
         await setVideoProgress(videoId, {
-          progress: 60,
+          progress: 65,
           status: "uploading",
-          message: "Video uploaded. Uploading thumbnail...",
+          message: "Video uploaded successfully.",
         });
         return v;
       })();
 
       const thumbPromise = (async () => {
-        const t = await uploadFileOnCloudinary(thumbnailPath);
+        const t = await uploadFileOnCloudinary(thumbnailPath, "image");
         await setVideoProgress(videoId, {
-          progress: 50,
+          progress: 55,
           status: "uploading",
-          message: "Thumbnail uploaded. Uploading video...",
+          message: "Thumbnail uploaded successfully.",
         });
         return t;
       })();
@@ -73,15 +71,15 @@ export const videoProcessingWorker = new Worker(
 
       stopTicker();
 
-      if (!cloudinaryVideo?.url)
+      if (!cloudinaryVideo?.secure_url)
         throw new Error("Cloudinary video upload failed");
-      if (!cloudinaryThumbnail?.url)
+      if (!cloudinaryThumbnail?.secure_url)
         throw new Error("Cloudinary thumbnail upload failed");
 
       await setVideoProgress(videoId, {
-        progress: 50,
-        status: "uploading",
-        message: "Thumbnail uploaded. Uploading video...",
+        progress: 75,
+        status: "saving",
+        message: "Saving to database...",
       });
 
       const published = parseBoolean(isPublished, false);
@@ -90,8 +88,8 @@ export const videoProcessingWorker = new Worker(
         videoId,
         {
           $set: {
-            thumbnail: cloudinaryThumbnail.url,
-            videoFile: cloudinaryVideo.url,
+            thumbnail: cloudinaryThumbnail.secure_url, // ✅ secure https URL for images
+            videoFile: cloudinaryVideo.public_id, // ✅ public_id for HLS URL construction
             duration: cloudinaryVideo.duration ?? null,
             isPublished: published,
           },
@@ -104,24 +102,21 @@ export const videoProcessingWorker = new Worker(
       await setVideoProgress(videoId, {
         progress: 95,
         status: "finalizing",
-        message: "Finalizing...",
+        message: "Almost done...",
       });
 
       await setVideoProgress(videoId, {
         progress: 100,
-        status: "uploading",
-        message: "Thumbnail uploaded. Uploading video...",
+        status: "done",
+        message: "Video published successfully!",
       });
-
-      // Optional cleanup
-      // await redis.expire(progressKey(videoId), 60 * 60);
 
       return updated;
     } catch (err) {
       await setVideoProgress(videoId, {
         progress: 0,
         status: "failed",
-        message: err?.message || "Unknown error",
+        message: err?.message || "Unknown error occurred",
       });
       throw err;
     }
