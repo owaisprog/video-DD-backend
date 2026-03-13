@@ -3,7 +3,10 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { Comment } from "../models/comments.model.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import { getVideoCommentKey } from "../utils/redisKeys.js";
+import {
+  getVideoCommentKey,
+  getVideoCommentsVersionKey,
+} from "../utils/redisKeys.js";
 import redis from "../config/redisConfig.js";
 import { EX } from "../constants.js";
 
