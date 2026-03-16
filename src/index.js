@@ -3,6 +3,7 @@ import "dotenv/config";
 import app from "./app.js";
 
 import { connectToDatabase } from "./config/dbConfig.js";
+import redis from "./config/redisConfig.js";
 
 const port = process.env.PORT || 4000;
 
@@ -10,6 +11,8 @@ const start = async () => {
   try {
     await connectToDatabase();
     console.log("Mongo connected");
+    await redis.ping();
+    console.log("Redis ping OK");
 
     app.listen(port, "0.0.0.0", () => {
       console.log(`Server is running on PORT:${port}`);

@@ -13,7 +13,6 @@ import {
   progressKey,
   tokenizeTags,
 } from "../utils/helperFunctions.js";
-
 export const publishVideo = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
 
@@ -31,38 +30,46 @@ export const publishVideo = asyncHandler(async (req, res) => {
   const videoPath = req.files?.video[0].path;
   const thumbnailPath = req.files?.thumbnail[0].path;
 
-  if (!videoPath) throw new ApiError(409, "Video is required");
-  if (!thumbnailPath) throw new ApiError(409, "Thumbnail is required");
+  if (!videoPath) {
+    throw new ApiError(409, "Video is required");
+  }
+  if (!thumbnailPath) {
+    throw new ApiError(409, "Thumbnail is required");
+  }
 
-  // ✅ Pass "video" so eager HLS transforms are applied
-  const cloudinaryVideo = await uploadFileOnCloudinary(videoPath, "video");
-  // ✅ Images don't need HLS — keep "image" explicit
-  const cloudinarythumbnail = await uploadFileOnCloudinary(
-    thumbnailPath,
-    "image"
-  );
+  const cloudinaryVideo = await uploadFileOnCloudinary(videoPath);
+  const cloudinarythumbnail = await uploadFileOnCloudinary(thumbnailPath);
 
-  if (!cloudinaryVideo) throw new ApiError(409, "Video upload failed");
-  if (!cloudinarythumbnail) throw new ApiError(409, "Thumbnail upload failed");
+  if (!cloudinaryVideo) {
+    throw new ApiError(409, "Video url is required");
+  }
+  if (!cloudinarythumbnail) {
+    throw new ApiError(409, "Thumbnail url is required");
+  }
+  let IsPublished;
 
-  let IsPublished = false;
-  if (isPublished === "true") IsPublished = true;
-  else if (isPublished === "false") IsPublished = false;
+  if (isPublished && isPublished === "true") {
+    IsPublished = true;
+  } else if (isPublished && isPublished === "false") {
+    IsPublished = false;
+  }
 
   const video = await Video.create({
-    thumbnail: cloudinarythumbnail.secure_url, // ✅ use secure_url (https)
+    thumbnail: cloudinarythumbnail.url,
     title,
     description,
     isPublished: IsPublished,
-    videoFile: cloudinaryVideo.public_id, // ✅ store public_id, not raw url
+    videoFile: cloudinaryVideo.url,
     duration: cloudinaryVideo.duration,
     owner: req.user?._id,
     tags,
   });
 
+  console.log("fieldsArray", fieldsArray);
+  console.log("videoPath", videoPath);
   return res
     .status(201)
-    .json(new ApiResponse(201, video, "Video published successfully"));
+    .json(new ApiResponse(201, video, "Video publish successfully"));
 });
 
 export const getMyAllVideos = asyncHandler(async (req, res) => {
@@ -71,9 +78,13 @@ export const getMyAllVideos = asyncHandler(async (req, res) => {
   page = Number(page);
   limit = Number(limit);
 
-  const options = { page, limit };
+  const options = {
+    page,
+    limit,
+  };
 
   let match = {};
+
   match.owner = new mongoose.Types.ObjectId(req?.user._id);
 
   if (query) {
@@ -83,11 +94,17 @@ export const getMyAllVideos = asyncHandler(async (req, res) => {
     ];
   }
 
+  // match.count = {};
+
   const sort = { [sortType]: sortBy === "asc" ? -1 : 1, _id: 1 };
 
   const aggregate = Video.aggregate([
-    { $match: match },
-    { $sort: sort },
+    {
+      $match: match,
+    },
+    {
+      $sort: sort,
+    },
     {
       $lookup: {
         from: "likes",
@@ -110,7 +127,9 @@ export const getMyAllVideos = asyncHandler(async (req, res) => {
         commentCounts: { $size: "$comments" },
       },
     },
-    { $project: { likes: 0, comments: 0 } },
+    {
+      $project: { likes: 0, comments: 0 },
+    },
   ]);
 
   const videos = await Video.aggregatePaginate(aggregate, options);
@@ -126,7 +145,10 @@ export const getAllVideos = asyncHandler(async (req, res) => {
   page = Number(page);
   limit = Number(limit);
 
-  const options = { page, limit };
+  const options = {
+    page,
+    limit,
+  };
 
   let match = {};
 
@@ -141,11 +163,17 @@ export const getAllVideos = asyncHandler(async (req, res) => {
     ];
   }
 
+  // match.count = {};
+
   const sort = { [sortType]: sortBy === "asc" ? -1 : 1, _id: 1 };
 
   const aggregate = Video.aggregate([
-    { $match: match },
-    { $sort: sort },
+    {
+      $match: match,
+    },
+    {
+      $sort: sort,
+    },
     {
       $lookup: {
         from: "users",
@@ -176,7 +204,9 @@ export const getAllVideos = asyncHandler(async (req, res) => {
         commentCounts: { $size: "$comments" },
       },
     },
-    { $project: { likes: 0, comments: 0 } },
+    {
+      $project: { likes: 0, comments: 0 },
+    },
   ]);
 
   const videos = await Video.aggregatePaginate(aggregate, options);
@@ -198,9 +228,10 @@ export const getVideoById = asyncHandler(async (req, res) => {
 
   const cachedData = await redis.get(redisVideoKey);
 
-  // ─── CACHE HIT ───
+  // ---------------- CACHE HIT ----------------
   if (cachedData) {
     const parsedData = JSON.parse(cachedData);
+
     const likesUserIds = parsedData.likesUserIds || [];
 
     parsedData.likedBy = currentUserId
@@ -220,9 +251,11 @@ export const getVideoById = asyncHandler(async (req, res) => {
       );
   }
 
-  // ─── DATABASE QUERY ───
+  // ---------------- DATABASE QUERY ----------------
   const video = await Video.aggregate([
-    { $match: { _id: new mongoose.Types.ObjectId(videoId) } },
+    {
+      $match: { _id: new mongoose.Types.ObjectId(videoId) },
+    },
     {
       $lookup: {
         from: "users",
@@ -282,13 +315,14 @@ export const getVideoById = asyncHandler(async (req, res) => {
   }
 
   const videoData = video[0];
+
   const likesUserIds = videoData.likesUserIds || [];
 
   videoData.likedBy = currentUserId
     ? likesUserIds.some((id) => String(id) === String(currentUserId))
     : false;
 
-  // Cache WITHOUT likedBy (per-user field must not be cached globally)
+  // cache WITHOUT likedBy
   await redis.set(redisVideoKey, JSON.stringify(videoData), "EX", 300);
 
   delete videoData.likesUserIds;
@@ -300,35 +334,31 @@ export const getVideoById = asyncHandler(async (req, res) => {
 
 export const updateVideo = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
-  const redisVideoKey = getVideoRedisKey(videoId);
+  let redisVideoKey = getVideoRedisKey(videoId);
 
-  const videoFilePath = req.file?.path;
-  if (!videoFilePath) {
-    throw new ApiError(409, "Video file is required");
+  const video = req.file.path;
+  if (!video) {
+    throw new Error(409, "Video is required");
   }
 
-  // ✅ Pass "video" so eager HLS transforms are applied
-  const cloudinaryVideo = await uploadFileOnCloudinary(videoFilePath, "video");
+  const cloudinaryVideo = await uploadFileOnCloudinary(video);
 
   if (!cloudinaryVideo) {
-    throw new ApiError(409, "Video upload failed");
+    throw new ApiError(409, "Video url is required");
   }
-
   const updatedVideo = await Video.findByIdAndUpdate(
     videoId,
     {
       $set: {
-        videoFile: cloudinaryVideo.public_id, // ✅ store public_id
-        duration: cloudinaryVideo.duration,
+        videoFile: cloudinaryVideo.url,
       },
     },
     { new: true }
   );
 
-  if (!updatedVideo) {
+  if (!updateVideo) {
     throw new ApiError(404, "Video not found");
   }
-
   await redis.del(redisVideoKey);
 
   return res
@@ -338,14 +368,14 @@ export const updateVideo = asyncHandler(async (req, res) => {
 
 export const deleteVideo = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
-  const redisVideoKey = getVideoRedisKey(videoId);
+  let redisVideoKey = getVideoRedisKey(videoId);
 
-  const result = await Video.deleteOne({ _id: videoId });
-
+  const result = await Video.deleteOne({
+    _id: videoId,
+  });
   if (result.deletedCount === 0) {
     throw new ApiError(404, "Video not found");
   }
-
   await redis.del(redisVideoKey);
 
   return res
@@ -355,16 +385,22 @@ export const deleteVideo = asyncHandler(async (req, res) => {
 
 export const togglePublishStatus = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
-  const redisVideoKey = getVideoRedisKey(videoId);
+  let redisVideoKey = getVideoRedisKey(videoId);
 
   const video = await Video.findByIdAndUpdate(
-    { _id: videoId, owner: req.user?._id },
-    [{ $set: { isPublished: { $not: "$isPublished" } } }],
-    { new: true }
+    {
+      _id: videoId,
+      owner: req.user?._id,
+    },
+    [
+      {
+        $set: { isPublished: { $not: "$isPublished" } },
+      },
+    ]
   );
 
   if (!video) {
-    throw new ApiError(400, "Video not found");
+    throw new Error(400, "Video not found");
   }
 
   const msg = video.isPublished
@@ -379,46 +415,68 @@ export const togglePublishStatus = asyncHandler(async (req, res) => {
 export const updateVideoMetaData = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
   const { title, description, tags } = req.body;
-  const redisVideoKey = getVideoRedisKey(videoId);
+  let redisVideoKey = getVideoRedisKey(videoId);
 
-  if (!videoId) throw new ApiError(409, "videoId is required");
+  if (!videoId) {
+    throw new ApiError(409, "videoId is required");
+  }
 
   const updatedData = await Video.findByIdAndUpdate(
-    { _id: videoId, owner: req.user?._id },
-    { $set: { title, description, tags } },
-    { new: true }
+    {
+      _id: videoId,
+      owner: req.user?._id,
+    },
+    {
+      $set: {
+        title,
+        description,
+        tags,
+      },
+    },
+    {
+      new: true,
+    }
   );
-
   await redis.del(redisVideoKey);
 
   return res
     .status(200)
-    .json(new ApiResponse(200, updatedData, "Video data updated successfully"));
+    .json(new ApiResponse(200, "Video data updated successfuly", updatedData));
 });
 
 export const updateVideoThumbnail = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
   const thumbnail = req.file?.path;
-  const redisVideoKey = getVideoRedisKey(videoId);
+  let redisVideoKey = getVideoRedisKey(videoId);
 
-  if (!videoId) throw new ApiError(409, "videoId is required");
+  if (!videoId) {
+    throw new ApiError(409, "videoId is required");
+  }
 
-  // ✅ Thumbnail is an image — explicit "image" type
-  const cloudinaryThumbnail = await uploadFileOnCloudinary(thumbnail, "image");
+  const cloudinaryThumbnail = await uploadFileOnCloudinary(thumbnail);
 
-  if (!cloudinaryThumbnail) throw new ApiError(409, "Thumbnail upload failed");
-
+  if (!cloudinaryThumbnail) {
+    throw new ApiError(409, "thumbnail url is required");
+  }
   const updatedData = await Video.findByIdAndUpdate(
-    { _id: videoId, owner: req.user?._id },
-    { $set: { thumbnail: cloudinaryThumbnail.secure_url } },
-    { new: true }
+    {
+      _id: videoId,
+      owner: req.user?._id,
+    },
+    {
+      $set: {
+        thumbnail: cloudinaryThumbnail.url,
+      },
+    },
+    {
+      new: true,
+    }
   );
-
   await redis.del(redisVideoKey);
 
   return res
     .status(200)
-    .json(new ApiResponse(200, updatedData, "Thumbnail updated successfully"));
+    .json(new ApiResponse(200, "Video data updated successfuly", updatedData));
 });
 
 export const getSuggestedVideos = asyncHandler(async (req, res) => {
@@ -441,6 +499,8 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
   const tokenPatterns = seedTokens.map((tok) => `\\b${escapeRegex(tok)}\\b`);
 
   const options = { page, limit };
+
+  // A pool bigger than limit so pagination + de-dupe still returns enough
   const pool = Math.min(400, limit * 10);
 
   const baseMatch = {
@@ -448,7 +508,7 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
     isPublished: true,
   };
 
-  // No usable tags → random fallback
+  // If seed has no usable tags/tokens -> random fallback
   if (seedTags.length === 0 || seedTokens.length === 0) {
     const aggregate = Video.aggregate([
       { $match: baseMatch },
@@ -475,6 +535,7 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
     ]);
 
     const suggested = await Video.aggregatePaginate(aggregate, options);
+
     return res
       .status(200)
       .json(
@@ -485,19 +546,23 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
   const pipeline = [
     {
       $facet: {
+        // 1) MATCHED: strong relevance candidates
         matched: [
           {
             $match: {
               ...baseMatch,
+              // quick pre-filter (exact matches)
               $or: [{ tags: { $in: seedTags } }, { tags: { $in: seedTokens } }],
             },
           },
+
+          // score by partial/word match so "gojo" matches "gojo saturu"
           {
             $addFields: {
               matchCount: {
                 $size: {
                   $filter: {
-                    input: tokenPatterns,
+                    input: tokenPatterns, // ["\\bgojo\\b", ...]
                     as: "pat",
                     cond: {
                       $anyElementTrue: {
@@ -506,7 +571,9 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
                           as: "t",
                           in: {
                             $regexMatch: {
-                              input: { $toLower: { $trim: { input: "$$t" } } },
+                              input: {
+                                $toLower: { $trim: { input: "$$t" } },
+                              },
                               regex: "$$pat",
                             },
                           },
@@ -518,20 +585,31 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
               },
             },
           },
+
           { $match: { matchCount: { $gt: 0 } } },
           { $sort: { matchCount: -1, createdAt: -1, _id: 1 } },
           { $limit: pool },
         ],
+
+        // 2) FILLER: random videos to fill remaining slots
         filler: [{ $match: baseMatch }, { $sample: { size: pool } }],
       },
     },
+
+    // matched first, then filler
     { $project: { combined: { $concatArrays: ["$matched", "$filler"] } } },
+
+    // unwind with index so we can keep "matched first" order
     { $unwind: { path: "$combined", includeArrayIndex: "idx" } },
+
+    // move combined doc to root and keep idx
     {
       $replaceRoot: {
         newRoot: { $mergeObjects: ["$combined", { idx: "$idx" }] },
       },
     },
+
+    // de-dupe (matched wins because it appears first in combined)
     {
       $group: {
         _id: "$_id",
@@ -540,8 +618,14 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
       },
     },
     { $replaceRoot: { newRoot: "$doc" } },
+
+    // restore order: matched first then filler
     { $sort: { idx: 1 } },
+
+    // remove idx cleanly (don't mix include/exclude in $project)
     { $unset: "idx" },
+
+    // populate owner(s)
     {
       $lookup: {
         from: "users",
@@ -550,6 +634,8 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
         as: "owner",
       },
     },
+
+    // output shape (pure inclusion projection)
     {
       $project: {
         title: 1,
@@ -559,7 +645,7 @@ export const getSuggestedVideos = asyncHandler(async (req, res) => {
         createdAt: 1,
         views: 1,
         isPublished: 1,
-        matchCount: 1,
+        matchCount: 1, // exists for matched items; undefined for filler
       },
     },
   ];
@@ -582,8 +668,10 @@ export const videoViewIncrement = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
 
   if (!videoId) throw new ApiError(400, "videoId is required");
-  if (!mongoose.isValidObjectId(videoId))
+
+  if (!mongoose.isValidObjectId(videoId)) {
     throw new ApiError(400, "Invalid videoId");
+  }
 
   const updated = await Video.findByIdAndUpdate(
     videoId,
@@ -598,7 +686,30 @@ export const videoViewIncrement = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { views: updated.views }, "View incremented"));
 });
 
-// ─────────────────────────── V2 ───────────────────────────
+// ---------------------------------- V2 ------------------------
+
+import path from "path";
+import fs from "fs/promises";
+
+async function assertLocalFileExists(filePath, label) {
+  try {
+    await fs.access(filePath);
+  } catch {
+    throw new ApiError(400, `${label} file not found at path: ${filePath}`);
+  }
+}
+
+async function safeDeleteFile(filePath) {
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.error("Failed to delete local file:", filePath, err);
+    }
+  }
+}
 
 export const publishVideoInQueue = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
@@ -614,11 +725,17 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
     }
   }
 
-  const videoPath = req.files?.video?.[0]?.path;
-  const thumbnailPath = req.files?.thumbnail?.[0]?.path;
+  const rawVideoPath = req.files?.video?.[0]?.path;
+  const rawThumbnailPath = req.files?.thumbnail?.[0]?.path;
 
-  if (!videoPath) throw new ApiError(400, "Video is required");
-  if (!thumbnailPath) throw new ApiError(400, "Thumbnail is required");
+  if (!rawVideoPath) throw new ApiError(400, "Video is required");
+  if (!rawThumbnailPath) throw new ApiError(400, "Thumbnail is required");
+
+  const videoPath = path.resolve(rawVideoPath);
+  const thumbnailPath = path.resolve(rawThumbnailPath);
+
+  await assertLocalFileExists(videoPath, "Video");
+  await assertLocalFileExists(thumbnailPath, "Thumbnail");
 
   const video = await Video.create({
     title,
@@ -628,22 +745,32 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
     tags,
   });
 
-  await videoProcessingQueue.add(
-    "upload-and-publish",
-    {
-      videoId: String(video._id),
-      videoPath,
-      thumbnailPath,
-      isPublished,
-    },
-    {
-      jobId: String(video._id),
-      removeOnComplete: { age: 3600 },
-      removeOnFail: 100,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 2000 },
-    }
-  );
+  try {
+    await videoProcessingQueue.add(
+      "upload-and-publish",
+      {
+        videoId: String(video._id),
+        videoPath,
+        thumbnailPath,
+        isPublished,
+      },
+      {
+        jobId: String(video._id),
+        removeOnComplete: { age: 3600 },
+        removeOnFail: 100,
+        attempts: 3,
+        backoff: { type: "exponential", delay: 2000 },
+      }
+    );
+  } catch (err) {
+    await Promise.allSettled([
+      safeDeleteFile(videoPath),
+      safeDeleteFile(thumbnailPath),
+      Video.findByIdAndDelete(video._id),
+    ]);
+
+    throw new ApiError(500, "Failed to queue video processing");
+  }
 
   return res
     .status(202)
@@ -658,11 +785,14 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
 
 export const getVideoProgress = asyncHandler(async (req, res) => {
   const { videoId } = req.params;
-  if (!videoId) throw new ApiError(400, "videoId is required");
+
+  if (!videoId) {
+    throw new ApiError(400, "videoId is required");
+  }
 
   const data = await redis.hgetall(progressKey(videoId));
 
-  return res.status(200).json(new ApiResponse(200, "progress", data));
+  return res.status(200).json(new ApiResponse(200, data, "progress"));
 });
 
 export const searchVideo = asyncHandler(async (req, res) => {
@@ -705,7 +835,14 @@ export const searchVideo = asyncHandler(async (req, res) => {
         },
       ],
       minimumShouldMatch: 1,
-      filter: [{ equals: { path: "isPublished", value: true } }],
+      filter: [
+        {
+          equals: {
+            path: "isPublished",
+            value: true,
+          },
+        },
+      ],
     },
   };
 
@@ -756,7 +893,6 @@ export const searchVideo = asyncHandler(async (req, res) => {
         },
       },
     ]),
-
     Video.aggregate([
       {
         $searchMeta: {

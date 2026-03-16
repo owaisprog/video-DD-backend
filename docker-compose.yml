@@ -6,6 +6,8 @@ services:
       - "10000:10000"
     env_file:
       - ./.env
+    volumes:
+      - uploads_temp:/usr/src/app/backend/public/temp
     develop:
       watch:
         - action: sync+restart
@@ -36,6 +38,8 @@ services:
     command: npm run worker
     env_file:
       - ./.env
+    volumes:
+      - uploads_temp:/usr/src/app/backend/public/temp
     develop:
       watch:
         - action: sync+restart
@@ -56,3 +60,6 @@ services:
 
         - action: rebuild
           path: ./.env
+
+volumes:
+  uploads_temp:
