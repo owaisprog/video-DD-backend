@@ -15,6 +15,7 @@ import {
   searchVideo,
   togglePublishStatus,
   updateVideo,
+  updateVideoAssetsInQueue,
   updateVideoMetaData,
   updateVideoThumbnail,
   videoViewIncrement,
@@ -228,7 +229,6 @@ router.get(
  */
 router.get(
   "/get-video-by-Id/:videoId",
-  verifyJwt,
   rateLimit(240, 60, "rl:video:getById"),
   getVideoById
 );
@@ -536,6 +536,212 @@ router.get(
   rateLimit(120, 60, "rl:video:progress"),
   getVideoProgress
 );
+
+/**
+ * @swagger
+ * /api/v1/video/update-video-assets-in-queue/{videoId}:
+ *   put:
+ *     summary: Update video file, thumbnail, or both using queue/worker (multipart/form-data) (requires JWT)
+ *     tags: [Videos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: videoId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Video ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               video:
+ *                 type: string
+ *                 format: binary
+ *               thumbnail:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       202:
+ *         description: Video asset update job queued successfully
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Video not found
+ */
+router.put(
+  "/update-video-assets-in-queue/:videoId",
+  verifyJwt,
+  rateLimit(20, 3600, "rl:video:updateAssetsQueue"),
+  upload.fields([
+    { name: "video", maxCount: 1 },
+    { name: "thumbnail", maxCount: 1 },
+  ]),
+  updateVideoAssetsInQueue
+);
+
+/**
+ * @swagger
+ * /api/v1/video/search:
+ *   post:
+ *     summary: Search published videos using Atlas Search
+ *     tags: [Videos]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - query
+ *             properties:
+ *               query:
+ *                 type: string
+ *                 example: naruto
+ *                 description: Search text for title, tags, and description
+ *               page:
+ *                 type: integer
+ *                 example: 1
+ *                 default: 1
+ *               limit:
+ *                 type: integer
+ *                 example: 12
+ *                 default: 12
+ *                 minimum: 1
+ *                 maximum: 50
+ *     responses:
+ *       200:
+ *         description: Videos fetched successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Videos fetched successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     docs:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           _id:
+ *                             type: string
+ *                             example: 65f0a1b2c3d4e5f678901234
+ *                           title:
+ *                             type: string
+ *                             example: Naruto edit
+ *                           description:
+ *                             type: string
+ *                             example: Best Naruto moments
+ *                           thumbnail:
+ *                             type: string
+ *                             example: https://res.cloudinary.com/demo/image/upload/sample.jpg
+ *                           videoFile:
+ *                             type: string
+ *                             example: https://res.cloudinary.com/demo/video/upload/sample.mp4
+ *                           duration:
+ *                             type: number
+ *                             example: 125.4
+ *                           tags:
+ *                             type: array
+ *                             items:
+ *                               type: string
+ *                             example: ["anime", "naruto"]
+ *                           views:
+ *                             type: integer
+ *                             example: 1500
+ *                           isPublished:
+ *                             type: boolean
+ *                             example: true
+ *                           owner:
+ *                             type: string
+ *                             example: 65f0a1b2c3d4e5f678901999
+ *                           ownerDetails:
+ *                             type: object
+ *                             properties:
+ *                               _id:
+ *                                 type: string
+ *                                 example: 65f0a1b2c3d4e5f678901999
+ *                               fullname:
+ *                                 type: string
+ *                                 example: John Doe
+ *                               username:
+ *                                 type: string
+ *                                 example: johndoe
+ *                               avatar:
+ *                                 type: string
+ *                                 example: https://example.com/avatar.jpg
+ *                               email:
+ *                                 type: string
+ *                                 example: john@example.com
+ *                           createdAt:
+ *                             type: string
+ *                             format: date-time
+ *                           updatedAt:
+ *                             type: string
+ *                             format: date-time
+ *                           score:
+ *                             type: number
+ *                             example: 12.45
+ *                     totalDocs:
+ *                       type: integer
+ *                       example: 37
+ *                     limit:
+ *                       type: integer
+ *                       example: 12
+ *                     page:
+ *                       type: integer
+ *                       example: 1
+ *                     totalPages:
+ *                       type: integer
+ *                       example: 4
+ *                     pagingCounter:
+ *                       type: integer
+ *                       example: 1
+ *                     hasPrevPage:
+ *                       type: boolean
+ *                       example: false
+ *                     hasNextPage:
+ *                       type: boolean
+ *                       example: true
+ *                     prevPage:
+ *                       type: integer
+ *                       nullable: true
+ *                       example: null
+ *                     nextPage:
+ *                       type: integer
+ *                       nullable: true
+ *                       example: 2
+ *       400:
+ *         description: Query is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: query is required
+ *                 data:
+ *                   nullable: true
+ *                   example: null
+ */
 
 router.post("/search", searchVideo);
 

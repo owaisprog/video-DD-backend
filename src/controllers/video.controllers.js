@@ -1,3 +1,5 @@
+import path from "path";
+import fs from "fs/promises";
 import { ApiError } from "../utils/ApiError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { uploadFileOnCloudinary } from "../utils/cloudinary.js";
@@ -13,6 +15,29 @@ import {
   progressKey,
   tokenizeTags,
 } from "../utils/helperFunctions.js";
+
+async function assertLocalFileExists(filePath, label) {
+  try {
+    await fs.access(filePath);
+  } catch {
+    throw new ApiError(400, `${label} file not found at path: ${filePath}`);
+  }
+}
+
+async function safeDeleteFile(filePath) {
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.error("Failed to delete local file:", filePath, err);
+    }
+  }
+}
+
+// ----------------------------------------------------------------------------------
+
 export const publishVideo = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
 
@@ -688,29 +713,6 @@ export const videoViewIncrement = asyncHandler(async (req, res) => {
 
 // ---------------------------------- V2 ------------------------
 
-import path from "path";
-import fs from "fs/promises";
-
-async function assertLocalFileExists(filePath, label) {
-  try {
-    await fs.access(filePath);
-  } catch {
-    throw new ApiError(400, `${label} file not found at path: ${filePath}`);
-  }
-}
-
-async function safeDeleteFile(filePath) {
-  if (!filePath) return;
-
-  try {
-    await fs.unlink(filePath);
-  } catch (err) {
-    if (err?.code !== "ENOENT") {
-      console.error("Failed to delete local file:", filePath, err);
-    }
-  }
-}
-
 export const publishVideoInQueue = asyncHandler(async (req, res) => {
   const { title, description, isPublished, tags } = req.body;
 
@@ -728,14 +730,20 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
   const rawVideoPath = req.files?.video?.[0]?.path;
   const rawThumbnailPath = req.files?.thumbnail?.[0]?.path;
 
-  if (!rawVideoPath) throw new ApiError(400, "Video is required");
-  if (!rawThumbnailPath) throw new ApiError(400, "Thumbnail is required");
+  if (!rawVideoPath) {
+    throw new ApiError(400, "Video is required");
+  }
 
   const videoPath = path.resolve(rawVideoPath);
-  const thumbnailPath = path.resolve(rawThumbnailPath);
+  const thumbnailPath = rawThumbnailPath
+    ? path.resolve(rawThumbnailPath)
+    : null;
 
   await assertLocalFileExists(videoPath, "Video");
-  await assertLocalFileExists(thumbnailPath, "Thumbnail");
+
+  if (thumbnailPath) {
+    await assertLocalFileExists(thumbnailPath, "Thumbnail");
+  }
 
   const video = await Video.create({
     title,
@@ -772,15 +780,17 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to queue video processing");
   }
 
-  return res
-    .status(202)
-    .json(
-      new ApiResponse(
-        202,
-        { videoId: video._id },
-        "Video queued for processing"
-      )
-    );
+  return res.status(202).json(
+    new ApiResponse(
+      202,
+      {
+        videoId: video._id,
+      },
+      thumbnailPath
+        ? "Video queued for processing"
+        : "Video queued for processing. Thumbnail will be generated automatically."
+    )
+  );
 });
 
 export const getVideoProgress = asyncHandler(async (req, res) => {
@@ -931,4 +941,85 @@ export const searchVideo = asyncHandler(async (req, res) => {
       nextPage: page < totalPages ? page + 1 : null,
     },
   });
+});
+
+export const updateVideoAssetsInQueue = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+
+  if (!videoId) {
+    throw new ApiError(400, "videoId is required");
+  }
+
+  if (!mongoose.isValidObjectId(videoId)) {
+    throw new ApiError(400, "Invalid videoId");
+  }
+
+  const rawVideoPath = req.files?.video?.[0]?.path;
+  const rawThumbnailPath = req.files?.thumbnail?.[0]?.path;
+
+  if (!rawVideoPath && !rawThumbnailPath) {
+    throw new ApiError(400, "At least one of video or thumbnail is required");
+  }
+
+  const existingVideo = await Video.findOne({
+    _id: videoId,
+    owner: req.user?._id,
+  }).select("_id");
+
+  if (!existingVideo) {
+    throw new ApiError(404, "Video not found");
+  }
+
+  const videoPath = rawVideoPath ? path.resolve(rawVideoPath) : null;
+  const thumbnailPath = rawThumbnailPath
+    ? path.resolve(rawThumbnailPath)
+    : null;
+
+  if (videoPath) {
+    await assertLocalFileExists(videoPath, "Video");
+  }
+
+  if (thumbnailPath) {
+    await assertLocalFileExists(thumbnailPath, "Thumbnail");
+  }
+
+  try {
+    await videoProcessingQueue.add(
+      "update-video-assets",
+      {
+        videoId: String(videoId),
+        ownerId: String(req.user?._id),
+        videoPath,
+        thumbnailPath,
+      },
+      {
+        removeOnComplete: { age: 3600 },
+        removeOnFail: 100,
+        attempts: 3,
+        backoff: { type: "exponential", delay: 2000 },
+      }
+    );
+  } catch (err) {
+    await Promise.allSettled([
+      safeDeleteFile(videoPath),
+      safeDeleteFile(thumbnailPath),
+    ]);
+
+    throw new ApiError(500, "Failed to queue video asset update");
+  }
+
+  return res.status(202).json(
+    new ApiResponse(
+      202,
+      {
+        videoId,
+        queued: true,
+        update: {
+          video: Boolean(videoPath),
+          thumbnail: Boolean(thumbnailPath),
+        },
+      },
+      "Video asset update queued successfully"
+    )
+  );
 });
