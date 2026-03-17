@@ -949,7 +949,6 @@ export const updateVideoAssetsInQueue = asyncHandler(async (req, res) => {
   if (!videoId) {
     throw new ApiError(400, "videoId is required");
   }
-
   if (!mongoose.isValidObjectId(videoId)) {
     throw new ApiError(400, "Invalid videoId");
   }
@@ -967,6 +966,10 @@ export const updateVideoAssetsInQueue = asyncHandler(async (req, res) => {
   }).select("_id");
 
   if (!existingVideo) {
+    await Promise.allSettled([
+      safeDeleteFile(rawVideoPath),
+      safeDeleteFile(rawThumbnailPath),
+    ]);
     throw new ApiError(404, "Video not found");
   }
 
@@ -975,22 +978,64 @@ export const updateVideoAssetsInQueue = asyncHandler(async (req, res) => {
     ? path.resolve(rawThumbnailPath)
     : null;
 
-  if (videoPath) {
-    await assertLocalFileExists(videoPath, "Video");
+  if (videoPath) await assertLocalFileExists(videoPath, "Video");
+  if (thumbnailPath) await assertLocalFileExists(thumbnailPath, "Thumbnail");
+
+  // ✅ Upload to Cloudinary HERE — before queuing
+  let cloudinaryVideoUrl = null;
+  let cloudinaryVideoDuration = null;
+  let cloudinaryThumbnailUrl = null;
+
+  try {
+    const [videoResult, thumbResult] = await Promise.allSettled([
+      videoPath
+        ? uploadFileOnCloudinary(videoPath, "video")
+        : Promise.resolve(null),
+      thumbnailPath
+        ? uploadFileOnCloudinary(thumbnailPath, "image")
+        : Promise.resolve(null),
+    ]);
+
+    if (videoPath && videoResult.status === "rejected") {
+      throw new ApiError(
+        500,
+        `Video upload failed: ${videoResult.reason?.message}`
+      );
+    }
+    if (thumbnailPath && thumbResult.status === "rejected") {
+      throw new ApiError(
+        500,
+        `Thumbnail upload failed: ${thumbResult.reason?.message}`
+      );
+    }
+
+    if (videoResult.value) {
+      cloudinaryVideoUrl =
+        videoResult.value.secure_url || videoResult.value.url;
+      cloudinaryVideoDuration = videoResult.value.duration ?? null;
+    }
+    if (thumbResult.value) {
+      cloudinaryThumbnailUrl =
+        thumbResult.value.secure_url || thumbResult.value.url;
+    }
+  } finally {
+    // Always clean up local files after upload attempt
+    await Promise.allSettled([
+      safeDeleteFile(videoPath),
+      safeDeleteFile(thumbnailPath),
+    ]);
   }
 
-  if (thumbnailPath) {
-    await assertLocalFileExists(thumbnailPath, "Thumbnail");
-  }
-
+  // ✅ Pass Cloudinary URLs to worker — no file paths
   try {
     await videoProcessingQueue.add(
       "update-video-assets",
       {
         videoId: String(videoId),
         ownerId: String(req.user?._id),
-        videoPath,
-        thumbnailPath,
+        cloudinaryVideoUrl,
+        cloudinaryVideoDuration,
+        cloudinaryThumbnailUrl,
       },
       {
         removeOnComplete: { age: 3600 },
@@ -1000,11 +1045,6 @@ export const updateVideoAssetsInQueue = asyncHandler(async (req, res) => {
       }
     );
   } catch (err) {
-    await Promise.allSettled([
-      safeDeleteFile(videoPath),
-      safeDeleteFile(thumbnailPath),
-    ]);
-
     throw new ApiError(500, "Failed to queue video asset update");
   }
 
@@ -1015,8 +1055,8 @@ export const updateVideoAssetsInQueue = asyncHandler(async (req, res) => {
         videoId,
         queued: true,
         update: {
-          video: Boolean(videoPath),
-          thumbnail: Boolean(thumbnailPath),
+          video: Boolean(cloudinaryVideoUrl),
+          thumbnail: Boolean(cloudinaryThumbnailUrl),
         },
       },
       "Video asset update queued successfully"

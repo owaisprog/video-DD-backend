@@ -440,9 +440,31 @@ async function processPublishJob(job) {
 }
 
 async function processUpdateAssetsJob(job) {
-  const { videoPath, thumbnailPath, videoId, ownerId } = job.data ?? {};
+  const {
+    videoId,
+    ownerId,
+    // New fields — Cloudinary URLs already uploaded by the controller
+    cloudinaryVideoUrl,
+    cloudinaryThumbnailUrl,
+    cloudinaryVideoDuration,
+    // Legacy fields — local file paths (backwards compatibility)
+    videoPath,
+    thumbnailPath,
+  } = job.data ?? {};
+
   let stopTicker = null;
   let finalError = null;
+
+  // Determine whether we already have Cloudinary URLs or need to upload
+  const hasCloudinaryVideo = Boolean(cloudinaryVideoUrl);
+  const hasCloudinaryThumbnail = Boolean(cloudinaryThumbnailUrl);
+  const hasLocalVideo = Boolean(videoPath);
+  const hasLocalThumbnail = Boolean(thumbnailPath);
+  const hasAnything =
+    hasCloudinaryVideo ||
+    hasCloudinaryThumbnail ||
+    hasLocalVideo ||
+    hasLocalThumbnail;
 
   try {
     assertMongoConnected();
@@ -451,9 +473,9 @@ async function processUpdateAssetsJob(job) {
       throw new UnrecoverableError("Missing required field: videoId");
     }
 
-    if (!videoPath && !thumbnailPath) {
+    if (!hasAnything) {
       throw new UnrecoverableError(
-        "At least one of videoPath or thumbnailPath is required"
+        "At least one of cloudinaryVideoUrl, cloudinaryThumbnailUrl, videoPath, or thumbnailPath is required"
       );
     }
 
@@ -461,8 +483,10 @@ async function processUpdateAssetsJob(job) {
       jobId: job.id,
       videoId,
       ownerId,
-      videoPath,
-      thumbnailPath,
+      cloudinaryVideoUrl: cloudinaryVideoUrl ?? null,
+      cloudinaryThumbnailUrl: cloudinaryThumbnailUrl ?? null,
+      videoPath: videoPath ?? null,
+      thumbnailPath: thumbnailPath ?? null,
     });
 
     await setVideoProgress(videoId, {
@@ -471,74 +495,89 @@ async function processUpdateAssetsJob(job) {
       message: "Update job started...",
     });
 
-    await setVideoProgress(videoId, {
-      progress: 10,
-      status: "checking",
-      message: "Checking uploaded files...",
-    });
+    // ── Build the DB $set from pre-uploaded Cloudinary URLs ──
+    const updateSet = {};
 
-    if (videoPath) {
-      await assertFileExists(videoPath, "Video");
-    }
-
-    if (thumbnailPath) {
-      await assertFileExists(thumbnailPath, "Thumbnail");
-      await assertFileSizeUnderLimit(
-        thumbnailPath,
-        MAX_THUMBNAIL_BYTES,
-        "Thumbnail"
-      );
-    }
-
-    const uploadMessage =
-      videoPath && thumbnailPath
-        ? "Uploading video and thumbnail..."
-        : videoPath
-          ? "Uploading video..."
-          : "Uploading thumbnail...";
-
-    await setVideoProgress(videoId, {
-      progress: 15,
-      status: "uploading",
-      message: uploadMessage,
-    });
-
-    stopTicker = startProgressTicker({
-      videoId,
-      from: 15,
-      max: 55,
-    });
-
-    const { cloudinaryVideo, cloudinaryThumbnail } = await uploadSelectedAssets(
-      {
-        videoPath,
-        thumbnailPath,
+    if (hasCloudinaryVideo) {
+      updateSet.videoFile = cloudinaryVideoUrl;
+      if (cloudinaryVideoDuration != null) {
+        updateSet.duration = cloudinaryVideoDuration;
       }
-    );
+    }
 
-    stopTickerSafely(stopTicker);
-    stopTicker = null;
+    if (hasCloudinaryThumbnail) {
+      updateSet.thumbnail = cloudinaryThumbnailUrl;
+    }
+
+    // ── If local paths were provided, upload them (legacy / fallback) ──
+    if (hasLocalVideo || hasLocalThumbnail) {
+      await setVideoProgress(videoId, {
+        progress: 10,
+        status: "checking",
+        message: "Checking uploaded files...",
+      });
+
+      if (hasLocalVideo) {
+        await assertFileExists(videoPath, "Video");
+      }
+
+      if (hasLocalThumbnail) {
+        await assertFileExists(thumbnailPath, "Thumbnail");
+        await assertFileSizeUnderLimit(
+          thumbnailPath,
+          MAX_THUMBNAIL_BYTES,
+          "Thumbnail"
+        );
+      }
+
+      const uploadMessage =
+        hasLocalVideo && hasLocalThumbnail
+          ? "Uploading video and thumbnail..."
+          : hasLocalVideo
+            ? "Uploading video..."
+            : "Uploading thumbnail...";
+
+      await setVideoProgress(videoId, {
+        progress: 15,
+        status: "uploading",
+        message: uploadMessage,
+      });
+
+      stopTicker = startProgressTicker({
+        videoId,
+        from: 15,
+        max: 55,
+      });
+
+      const { cloudinaryVideo, cloudinaryThumbnail } =
+        await uploadSelectedAssets({
+          videoPath: hasLocalVideo ? videoPath : null,
+          thumbnailPath: hasLocalThumbnail ? thumbnailPath : null,
+        });
+
+      stopTickerSafely(stopTicker);
+      stopTicker = null;
+
+      if (cloudinaryVideo?.url) {
+        updateSet.videoFile = cloudinaryVideo.url;
+        updateSet.duration = cloudinaryVideo.duration ?? null;
+      }
+
+      if (cloudinaryThumbnail?.url) {
+        updateSet.thumbnail = cloudinaryThumbnail.url;
+      }
+    }
+
+    // ── Persist to MongoDB ──
+    if (Object.keys(updateSet).length === 0) {
+      throw new UnrecoverableError("No valid uploaded assets to update");
+    }
 
     await setVideoProgress(videoId, {
       progress: 75,
       status: "saving",
-      message: "Uploads complete. Saving updated video data...",
+      message: "Saving updated video data...",
     });
-
-    const updateSet = {};
-
-    if (cloudinaryVideo?.url) {
-      updateSet.videoFile = cloudinaryVideo.url;
-      updateSet.duration = cloudinaryVideo.duration ?? null;
-    }
-
-    if (cloudinaryThumbnail?.url) {
-      updateSet.thumbnail = cloudinaryThumbnail.url;
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      throw new UnrecoverableError("No valid uploaded assets to update");
-    }
 
     assertMongoConnected();
 
@@ -561,10 +600,12 @@ async function processUpdateAssetsJob(job) {
       );
     }
 
+    const hasVideo = hasCloudinaryVideo || hasLocalVideo;
+    const hasThumbnail = hasCloudinaryThumbnail || hasLocalThumbnail;
     const completedMessage =
-      videoPath && thumbnailPath
+      hasVideo && hasThumbnail
         ? "Video and thumbnail updated successfully."
-        : videoPath
+        : hasVideo
           ? "Video updated successfully."
           : "Thumbnail updated successfully.";
 
