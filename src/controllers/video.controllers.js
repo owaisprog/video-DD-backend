@@ -780,17 +780,17 @@ export const publishVideoInQueue = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to queue video processing");
   }
 
-  return res.status(202).json(
-    new ApiResponse(
-      202,
-      {
-        videoId: video._id,
-      },
-      thumbnailPath
-        ? "Video queued for processing"
-        : "Video queued for processing. Thumbnail will be generated automatically."
-    )
-  );
+  return res
+    .status(202)
+    .json(
+      new ApiResponse(
+        202,
+        { videoId: video._id },
+        thumbnailPath
+          ? "Video queued for processing"
+          : "Video queued for processing. Thumbnail will be generated automatically."
+      )
+    );
 });
 
 export const getVideoProgress = asyncHandler(async (req, res) => {
