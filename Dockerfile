@@ -5,15 +5,14 @@ ENV NODE_ENV=production
 
 COPY --chown=node:node package*.json ./
 
-# Install system binaries needed by the worker
-# Alpine's ffmpeg package includes both /usr/bin/ffmpeg and /usr/bin/ffprobe
+# Install ffmpeg/ffprobe and create shared upload dir
 RUN apk add --no-cache ffmpeg \
-    && mkdir -p /usr/src/app/backend/public/temp \
-    && chown -R node:node /usr/src/app/backend
+    && mkdir -p /shared/uploads \
+    && chown -R node:node /usr/src/app/backend /shared/uploads
 
-# Make paths explicit for your worker code
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV FFPROBE_PATH=/usr/bin/ffprobe
+ENV UPLOAD_TEMP_DIR=/shared/uploads
 
 USER node
 

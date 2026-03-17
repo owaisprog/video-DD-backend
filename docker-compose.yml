@@ -7,7 +7,7 @@ services:
     env_file:
       - ./.env
     volumes:
-      - uploads_temp:/usr/src/app/backend/public/temp
+      - uploads_temp:/shared/uploads
     develop:
       watch:
         - action: sync+restart
@@ -39,7 +39,7 @@ services:
     env_file:
       - ./.env
     volumes:
-      - uploads_temp:/usr/src/app/backend/public/temp
+      - uploads_temp:/shared/uploads
     develop:
       watch:
         - action: sync+restart
